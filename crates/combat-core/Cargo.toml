@@ -1,0 +1,10 @@
+[package]
+name = "combat-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bincode = "1"
+renet = "2.0.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml = "0.9.34"

@@ -1,0 +1,9 @@
+[package]
+name = "net-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+combat-core = { version = "0.1.0", path = "../combat-core" }
+renet = "2.0.0"
+renetcode = "2.0.0"

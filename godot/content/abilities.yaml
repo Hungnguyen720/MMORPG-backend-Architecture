@@ -1,0 +1,91 @@
+# Phase 0 content pack. Everything the combat engine knows about this class
+# lives here: change numbers, restart the server, and the client picks the
+# same file up on launch. A different tenant ships a different file.
+
+class:
+  name: Spellweaver
+  max_hp: 5000
+  max_mana: 1000
+  mana_regen_per_sec: 18
+  spell_power: 400
+  crit_chance: 0.15
+  move_speed: 7.0          # metres per second
+
+abilities:
+  # Key 1. Hard cast: the bread-and-butter nuke.
+  - id: frost_lance
+    name: Frost Lance
+    cast_ms: 2000
+    gcd_ms: 1500
+    mana_cost: 20
+    range: 30
+    color: "#5ab4ff"
+    anim: cast_2h_forward
+    vfx: frost_lance
+    effects:
+      - damage: { school: frost, base: 900, coeff_spellpower: 1.0 }
+
+  # Key 2. Instant on the GCD.
+  - id: ice_shard
+    name: Ice Shard
+    gcd_ms: 1500
+    mana_cost: 12
+    range: 30
+    color: "#a8e4ff"
+    anim: cast_1h
+    vfx: ice_shard
+    effects:
+      - damage: { school: frost, base: 450, coeff_spellpower: 0.5 }
+
+  # Key 3. Channel: four ticks over three seconds, broken by movement.
+  - id: arcane_torrent
+    name: Arcane Torrent
+    channel_ms: 3000
+    channel_ticks: 4
+    gcd_ms: 1500
+    mana_cost: 30
+    range: 30
+    color: "#c58bff"
+    anim: channel
+    vfx: arcane_beam
+    effects:
+      - damage: { school: arcane, base: 300, coeff_spellpower: 0.35 }
+
+  # Key 4. Instant DoT.
+  - id: searing_brand
+    name: Searing Brand
+    gcd_ms: 1500
+    mana_cost: 15
+    range: 30
+    color: "#ff8a3d"
+    anim: cast_1h
+    vfx: fire_brand
+    effects:
+      - apply_aura: { aura: searing_brand }
+
+  # Key 5. Off the GCD with its own cooldown: weave it between anything.
+  - id: arcane_surge
+    name: Arcane Surge
+    gcd_ms: 0
+    cooldown_ms: 15000
+    range: 30
+    cast_while_moving: true
+    color: "#ff5ad1"
+    anim: cast_1h
+    vfx: arcane_burst
+    effects:
+      - damage: { school: arcane, base: 800, coeff_spellpower: 0.8 }
+
+auras:
+  - id: searing_brand
+    name: Searing Brand
+    duration_ms: 12000
+    tick_ms: 2000
+    tick_base: 160
+    tick_coeff_spellpower: 0.2
+
+dummy:
+  name: Training Dummy
+  max_hp: 250000
+  reset_after_ms: 10000
+  position: [0.0, 0.0, -15.0]

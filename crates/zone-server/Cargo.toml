@@ -1,0 +1,10 @@
+[package]
+name = "zone-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bincode = "1"
+combat-core = { version = "0.1.0", path = "../combat-core" }
+renet = "2.0.0"
+renet_netcode = "2.0.0"

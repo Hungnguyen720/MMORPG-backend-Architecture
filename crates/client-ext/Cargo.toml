@@ -1,0 +1,12 @@
+[package]
+name = "client-ext"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+combat-core = { version = "0.1.0", path = "../combat-core" }
+godot = { version = "0.5.5", features = ["api-4-5"] }
+net-client = { version = "0.1.0", path = "../net-client" }
+
+[lib]
+crate-type = ["cdylib"]
