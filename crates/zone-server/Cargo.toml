@@ -5,6 +5,12 @@ edition = "2024"
 
 [dependencies]
 bincode = "1"
+bytes = "1"
 combat-core = { version = "0.1.0", path = "../combat-core" }
+rayon = "1.10"
 renet = "2.0.0"
 renet_netcode = "2.0.0"
+renetcode = "2.0.0"
+socket2 = { version = "0.5", features = ["all"] }
+libc = "0.2"
+crossbeam-channel = "0.5"

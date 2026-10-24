@@ -1,15 +1,5 @@
-# Phase 0 content pack. Everything the combat engine knows about this class
-# lives here: change numbers, restart the server, and the client picks the
-# same file up on launch. A different tenant ships a different file.
-
-class:
-  name: Spellweaver
-  max_hp: 5000
-  max_mana: 1000
-  mana_regen_per_sec: 18
-  spell_power: 400
-  crit_chance: 0.15
-  move_speed: 7.0          # metres per second
+# Abilities and auras. The five player abilities are the Phase 0 kit,
+# unchanged: combat-feel tuning waits on the hands-on test.
 
 abilities:
   # Key 1. Hard cast: the bread-and-butter nuke.
@@ -76,6 +66,31 @@ abilities:
     effects:
       - damage: { school: arcane, base: 800, coeff_spellpower: 0.8 }
 
+  # ---- Mob abilities. Same rules engine, same cast bars. ----
+  - id: shadow_bolt
+    name: Shadow Bolt
+    cast_ms: 2500
+    gcd_ms: 1500
+    cooldown_ms: 6000
+    range: 30
+    color: "#8a5cff"
+    anim: cast_1h
+    vfx: shadow_bolt
+    effects:
+      - damage: { school: shadow, base: 380, coeff_spellpower: 1.0 }
+
+  - id: rending_bite
+    name: Rending Bite
+    gcd_ms: 1500
+    cooldown_ms: 9000
+    range: 3
+    requires_los: false
+    color: "#c0392b"
+    anim: attack_1h_2
+    vfx: bite
+    effects:
+      - apply_aura: { aura: bleeding }
+
 auras:
   - id: searing_brand
     name: Searing Brand
@@ -84,8 +99,8 @@ auras:
     tick_base: 160
     tick_coeff_spellpower: 0.2
 
-dummy:
-  name: Training Dummy
-  max_hp: 250000
-  reset_after_ms: 10000
-  position: [0.0, 0.0, -15.0]
+  - id: bleeding
+    name: Bleeding
+    duration_ms: 8000
+    tick_ms: 2000
+    tick_base: 90

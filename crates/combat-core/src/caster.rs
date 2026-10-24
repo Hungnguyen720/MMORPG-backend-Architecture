@@ -17,6 +17,9 @@ pub enum FailReason {
     NoTarget,
     Moving,
     UnknownAbility,
+    LineOfSight,
+    InvalidTarget,
+    Dead,
 }
 
 impl FailReason {
@@ -30,6 +33,9 @@ impl FailReason {
             FailReason::NoTarget => "You have no target",
             FailReason::Moving => "Can't do that while moving",
             FailReason::UnknownAbility => "Unknown ability",
+            FailReason::LineOfSight => "Target not in line of sight",
+            FailReason::InvalidTarget => "Invalid target",
+            FailReason::Dead => "You are dead",
         }
     }
 }
@@ -63,6 +69,9 @@ pub struct CastCtx {
     pub distance: Option<f32>,
     pub moving: bool,
     pub target_moving: bool,
+    /// Line of sight to the target (always true for self-cast abilities).
+    pub los: bool,
+    pub dead: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +128,9 @@ impl CasterState {
         now: Ms,
         ctx: CastCtx,
     ) -> Result<(), FailReason> {
+        if ctx.dead {
+            return Err(FailReason::Dead);
+        }
         if self.ready_at(id, def) > now {
             return Err(if self.cast.as_ref().is_some_and(|c| c.ends_at > now) {
                 FailReason::Casting
@@ -144,6 +156,9 @@ impl CasterState {
         };
         if distance > def.range + leeway {
             return Err(FailReason::OutOfRange);
+        }
+        if def.requires_los && !ctx.los {
+            return Err(FailReason::LineOfSight);
         }
         Ok(())
     }
@@ -243,29 +258,45 @@ mod tests {
     use super::*;
     use crate::content::ContentPack;
 
-    const PACK: &str = include_str!("../../../godot/content/abilities.yaml");
+    fn pack() -> ContentPack {
+        ContentPack::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tenants/default")).unwrap()
+    }
 
     fn ctx() -> CastCtx {
         CastCtx {
             distance: Some(10.0),
             moving: false,
             target_moving: false,
+            los: true,
+            dead: false,
         }
     }
 
     fn idx(p: &ContentPack, id: &str) -> AbilityId {
-        p.abilities.iter().position(|a| a.id == id).unwrap() as AbilityId
+        p.ability_index(id).unwrap()
     }
 
     #[test]
     fn pack_loads() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
-        assert_eq!(p.abilities.len(), 5);
+        let p = pack();
+        assert_eq!(p.class_bar(0).len(), 5);
+    }
+
+    #[test]
+    fn los_blocks_after_range() {
+        let p = pack();
+        let lance = idx(&p, "frost_lance");
+        let c = CasterState::new(p.abilities.len(), 1000.0);
+        let blind = CastCtx { los: false, ..ctx() };
+        assert_eq!(
+            c.check(lance, &p.abilities[lance as usize], 0, blind),
+            Err(FailReason::LineOfSight)
+        );
     }
 
     #[test]
     fn gcd_blocks_then_queue_window_opens() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
+        let p = pack();
         let shard = idx(&p, "ice_shard");
         let def = &p.abilities[shard as usize];
         let mut c = CasterState::new(p.abilities.len(), 1000.0);
@@ -278,7 +309,7 @@ mod tests {
 
     #[test]
     fn allowance_shortens_hard_cast_only() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
+        let p = pack();
         let lance = idx(&p, "frost_lance");
         let def = &p.abilities[lance as usize];
         let mut c = CasterState::new(p.abilities.len(), 1000.0);
@@ -293,7 +324,7 @@ mod tests {
 
     #[test]
     fn off_gcd_ignores_gcd_but_not_cooldown() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
+        let p = pack();
         let shard = idx(&p, "ice_shard");
         let surge = idx(&p, "arcane_surge");
         let mut c = CasterState::new(p.abilities.len(), 1000.0);
@@ -309,8 +340,8 @@ mod tests {
 
     #[test]
     fn channel_ticks_evenly() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
-        let ch = p.abilities.iter().position(|a| a.is_channel()).unwrap() as AbilityId;
+        let p = pack();
+        let ch = idx(&p, "arcane_torrent");
         let def = &p.abilities[ch as usize];
         let mut c = CasterState::new(p.abilities.len(), 1000.0);
         c.start(ch, def, 1, 0, 0, 0);
@@ -326,7 +357,7 @@ mod tests {
 
     #[test]
     fn queued_after_cast_starts_at_cast_end() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
+        let p = pack();
         let lance = idx(&p, "frost_lance");
         let shard = idx(&p, "ice_shard");
         let mut c = CasterState::new(p.abilities.len(), 1000.0);
@@ -339,7 +370,7 @@ mod tests {
 
     #[test]
     fn moving_blocks_casts_not_instants() {
-        let p = ContentPack::from_yaml(PACK).unwrap();
+        let p = pack();
         let c = CasterState::new(p.abilities.len(), 1000.0);
         let moving = CastCtx {
             moving: true,

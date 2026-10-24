@@ -1,0 +1,69 @@
+# Mobs. AI behaviour comes from these numbers; models and colours are
+# resolved by the tenant's asset pack.
+mobs:
+  - id: training_dummy
+    name: Training Dummy
+    max_hp: 250000
+    dummy: true
+    reset_after_ms: 10000
+    model: dummy
+    color: "#a07040"
+
+  - id: forest_wolf
+    name: Forest Wolf
+    level: 1
+    max_hp: 2800
+    melee_damage: 140
+    attack_ms: 2000
+    abilities: [rending_bite]
+    aggro_radius: 12
+    wander_radius: 8
+    move_speed: 7.5
+    xp: 60
+    model: quadruped_wolf
+    color: "#8c8c94"
+    scale: 0.8
+
+  - id: wild_boar
+    name: Wild Boar
+    level: 2
+    max_hp: 3600
+    melee_damage: 180
+    attack_ms: 2200
+    aggro_radius: 0          # neutral: only fights back
+    wander_radius: 6
+    move_speed: 6.5
+    xp: 75
+    model: quadruped_boar
+    color: "#7a5236"
+    scale: 0.9
+
+  - id: cultist_adept
+    name: Cultist Adept
+    level: 3
+    max_hp: 3200
+    melee_damage: 90
+    abilities: [shadow_bolt]
+    spell_power: 100
+    mana: 1000
+    aggro_radius: 16
+    wander_radius: 0
+    move_speed: 6.0
+    xp: 110
+    model: humanoid_robed
+    color: "#6b3fa0"
+
+  - id: elder_treant
+    name: Elder Treant
+    level: 5
+    max_hp: 30000
+    melee_damage: 600
+    attack_ms: 2500
+    melee_range: 3.5
+    aggro_radius: 10
+    leash_radius: 30
+    move_speed: 4.5
+    xp: 600
+    model: treant
+    color: "#3f6b35"
+    scale: 1.8

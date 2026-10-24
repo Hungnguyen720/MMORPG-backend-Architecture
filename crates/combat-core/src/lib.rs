@@ -3,6 +3,7 @@
 //! resolution run the exact same rules.
 
 pub mod caster;
+pub mod codec;
 pub mod content;
 pub mod movement;
 pub mod protocol;
@@ -23,7 +24,7 @@ pub const MAX_LATENCY_ALLOWANCE_MS: Ms = 100;
 /// Extra range granted when either side is moving.
 pub const RANGE_LEEWAY: f32 = 2.0;
 
-pub const PROTOCOL_ID: u64 = 0x5048_4153_4530_0001; // "PHASE0" v1
+pub const PROTOCOL_ID: u64 = 0x4d4d_4f45_4e47_0002; // "MMOENG" v2
 pub const DEFAULT_PORT: u16 = 5000;
 
 /// Channel ids, matching the architecture doc.
@@ -32,10 +33,13 @@ pub mod channel {
     pub const STATE: u8 = 0;
     /// Reliable ordered: everything combat.
     pub const COMBAT: u8 = 1;
+    /// Reliable unordered: chat, inventory, party, zone changes.
+    pub const BULK: u8 = 2;
 }
 
 pub use caster::{ActiveCast, CastCtx, CasterState, FailReason, Started};
-pub use content::{AbilityDef, AuraDef, ContentPack, Effect};
+pub use codec::{EntState, EntityKind};
+pub use content::{AbilityDef, AuraDef, ContentPack, Effect, TargetKind};
 
 /// renet channel layout shared by both ends. Combat resends fast: a lost
 /// cast request should cost one short resend, not a 300 ms default timeout.
@@ -53,6 +57,13 @@ pub fn connection_config() -> renet::ConnectionConfig {
             max_memory_usage_bytes: 1 << 20,
             send_type: SendType::ReliableOrdered {
                 resend_time: Duration::from_millis(60),
+            },
+        },
+        ChannelConfig {
+            channel_id: channel::BULK,
+            max_memory_usage_bytes: 1 << 20,
+            send_type: SendType::ReliableUnordered {
+                resend_time: Duration::from_millis(200),
             },
         },
     ];

@@ -21,6 +21,12 @@ pub struct LagTransport {
     /// Packet loss probability per packet, per direction, 0..1.
     pub loss: f32,
     rng: u64,
+    /// Raw UDP payload bytes and packets, both directions, for bandwidth
+    /// reporting. Counted on the real socket, after fake loss.
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    pub packets_in: u64,
+    pub packets_out: u64,
 }
 
 impl LagTransport {
@@ -41,6 +47,10 @@ impl LagTransport {
             latency_ms: 0,
             loss: 0.0,
             rng: current_time.as_nanos() as u64 | 1,
+            bytes_in: 0,
+            bytes_out: 0,
+            packets_in: 0,
+            packets_out: 0,
         })
     }
 
@@ -78,6 +88,8 @@ impl LagTransport {
         let now = Instant::now();
         while self.outgoing.front().is_some_and(|(at, _, _)| *at <= now) {
             let (_, bytes, addr) = self.outgoing.pop_front().unwrap();
+            self.bytes_out += bytes.len() as u64;
+            self.packets_out += 1;
             let _ = self.socket.send_to(&bytes, addr);
         }
     }
@@ -106,6 +118,8 @@ impl LagTransport {
                     if addr != server || self.dropped() {
                         continue;
                     }
+                    self.bytes_in += len as u64;
+                    self.packets_in += 1;
                     let at = Instant::now() + self.one_way();
                     self.incoming.push_back((at, self.buffer[..len].to_vec()));
                 }
