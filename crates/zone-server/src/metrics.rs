@@ -33,6 +33,8 @@ pub struct ZoneMetrics {
     pub net_loop_p99: f64,
     pub net_loop_max: f64,
     pub send_errors: u64,
+    /// The layer merged away and its thread ended.
+    pub closed: bool,
 }
 
 pub type Shared = Arc<Mutex<Vec<ZoneMetrics>>>;
@@ -140,7 +142,8 @@ pub fn serve(port: u16, shared: Shared) {
             let mut buf = [0u8; 1024];
             let n = stream.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]);
-            let all = shared.lock().unwrap().clone();
+            let all: Vec<ZoneMetrics> =
+                shared.lock().unwrap().iter().filter(|m| !m.closed).cloned().collect();
             let (ctype, body) = if req.starts_with("GET /metrics.json") {
                 ("application/json", render_json(&all))
             } else {

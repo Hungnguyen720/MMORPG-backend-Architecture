@@ -16,7 +16,10 @@ use combat_core::{
 };
 use renet::ClientId;
 
+use crate::game::Inventory;
 use crate::interest::{ClientNet, Grid};
+use crate::svc::SvcReq;
+use services::Party;
 
 /// Seconds of no damage dealt or taken before an entity leaves combat.
 pub const COMBAT_TIMEOUT_MS: Ms = 5000;
@@ -45,6 +48,64 @@ pub struct PlayerCtl {
     /// What the client has targeted (0 = nothing), kept in its view.
     pub target: EntityId,
     pub class: u16,
+    /// Database ids; 0 for development logins, which are never saved.
+    pub character: i64,
+    pub account: i64,
+    pub xp: u32,
+    pub inv: Inventory,
+    /// (item, ready at) for items with a use cooldown.
+    pub item_cd: Vec<(u16, Ms)>,
+    pub party: Option<Party>,
+    pub handoff: Handoff,
+    pub last_chat: Ms,
+    /// Progress changed since the last save.
+    pub dirty: bool,
+    /// Standing in a portal: it fires once on entry, not every step.
+    pub in_portal: bool,
+}
+
+/// Leaving this zone server for another (portal or layer merge).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Handoff {
+    None,
+    /// Waiting for the world service to place us. Inputs are ignored.
+    Pending { zone: String, pos: [f32; 3] },
+    /// The client has its new address; it disconnects itself, or is
+    /// kicked at `kick_at`.
+    Sent { zone: String, pos: [f32; 3], kick_at: Ms },
+}
+
+/// Everything needed to put a player in the world.
+pub struct PlayerInit {
+    pub name: String,
+    pub class: u16,
+    pub level: u32,
+    pub pos: Option<[f32; 3]>,
+    pub character: i64,
+    pub account: i64,
+    pub xp: u32,
+    pub hp: Option<f32>,
+    pub mana: Option<f32>,
+    pub inv: Option<Inventory>,
+    pub party: Option<Party>,
+}
+
+impl PlayerInit {
+    pub fn dev(name: String, class: u16, level: u32, pos: Option<[f32; 3]>) -> Self {
+        Self {
+            name,
+            class,
+            level,
+            pos,
+            character: 0,
+            account: 0,
+            xp: 0,
+            hp: None,
+            mana: None,
+            inv: None,
+            party: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +213,12 @@ pub struct Zone {
     pub corrections: u64,
     /// Clients to disconnect (failed auth, duplicate login, handoff done).
     pub kicks: Vec<ClientId>,
+    /// Requests for the services thread (saves, placement, chat, party).
+    pub svc: Vec<SvcReq>,
+    /// Entity of each logged-in character.
+    pub by_character: HashMap<i64, EntityId>,
+    /// This layer is merging away: hand everyone off and close.
+    pub draining: bool,
 }
 
 impl Zone {
@@ -177,6 +244,9 @@ impl Zone {
             tick: 0,
             corrections: 0,
             kicks: Vec::new(),
+            svc: Vec::new(),
+            by_character: HashMap::new(),
+            draining: false,
         };
         z.spawn_mobs(now);
         z
@@ -260,7 +330,7 @@ impl Zone {
         id
     }
 
-    /// A player joins at `pos` (or the zone spawn). Returns its entity id.
+    /// A development player joins at `pos` (or the zone spawn).
     pub fn add_player(
         &mut self,
         client_id: ClientId,
@@ -270,24 +340,38 @@ impl Zone {
         pos: Option<[f32; 3]>,
         now: Ms,
     ) -> EntityId {
+        self.add_player_with(client_id, PlayerInit::dev(name, class, level, pos), now)
+    }
+
+    /// A player joins. Returns its entity id.
+    pub fn add_player_with(&mut self, client_id: ClientId, init: PlayerInit, now: Ms) -> EntityId {
         let id = self.alloc_id();
-        let mut spawn = pos.unwrap_or(self.zone_def().player_spawn);
+        let mut spawn = init.pos.unwrap_or(self.zone_def().player_spawn);
         if !self.geo.in_bounds(spawn) || self.geo.inside_blocker(spawn) {
             spawn = self.zone_def().player_spawn;
         }
+        let dead_on_save = init.hp.is_some_and(|h| h <= 0.0);
+        if dead_on_save {
+            spawn = self.zone_def().graveyard;
+        }
         // Spread arrivals a little so a crowd does not stack on one point.
-        let jitter = (id % 9) as f32 - 4.0;
-        let spawn = self.geo.slide(spawn, [jitter * 0.8, 0.0]);
+        if init.pos.is_none() {
+            let jitter = (id % 9) as f32 - 4.0;
+            spawn = self.geo.slide(spawn, [jitter * 0.8, 0.0]);
+        }
         let mut validator = MoveValidator::default();
         validator.reset(now, spawn);
+        let class = init.class;
+        let level = init.level.clamp(1, self.pack.level_cap());
         let stats = self.pack.classes[class as usize].stats_at(level);
         let cell = self.grid.cell_of(spawn);
         self.grid.insert(id, cell);
-        let name = if name.is_empty() {
+        let name = if init.name.is_empty() {
             format!("Player{id}")
         } else {
-            name
+            init.name
         };
+        let bag = self.pack.tenant.bag_slots as usize;
         self.entities.insert(
             id,
             Entity {
@@ -316,13 +400,39 @@ impl Zone {
                     rtt_ms: 0,
                     target: 0,
                     class,
+                    character: init.character,
+                    account: init.account,
+                    xp: init.xp,
+                    inv: init.inv.unwrap_or_else(|| Inventory::new(bag)),
+                    item_cd: Vec::new(),
+                    party: init.party,
+                    handoff: Handoff::None,
+                    last_chat: 0,
+                    dirty: false,
+                    in_portal: false,
                 })),
                 mob: None,
                 passive: false,
             },
         );
+        self.recalc_stats(id);
+        {
+            let e = self.entities.get_mut(&id).unwrap();
+            let max_hp = e.stats.max_hp;
+            e.hp = if dead_on_save {
+                max_hp * 0.5
+            } else {
+                init.hp.map_or(max_hp, |h| h.min(max_hp))
+            };
+            if let Some(m) = init.mana {
+                e.caster.mana = m.min(e.caster.max_mana);
+            }
+        }
         self.clients.insert(client_id, id);
         self.nets.insert(client_id, ClientNet::new(client_id, id));
+        if init.character != 0 {
+            self.by_character.insert(init.character, id);
+        }
         if self.verbose {
             println!("client {client_id} joined as entity {id} ({name})");
         }
@@ -340,6 +450,11 @@ impl Zone {
             },
         );
         self.send(client_id, ServerMsg::Correction { pos: spawn });
+        self.send_xp(id, 0);
+        self.send_inventory(id);
+        if self.entities[&id].player.as_ref().unwrap().party.is_some() {
+            self.send_party(id);
+        }
         id
     }
 
@@ -348,6 +463,9 @@ impl Zone {
         self.nets.remove(&client_id);
         let e = self.entities.remove(&id)?;
         self.grid.remove(id, e.cell);
+        if let Some(p) = e.player.as_ref() {
+            self.by_character.remove(&p.character);
+        }
         Some(e)
     }
 
@@ -421,6 +539,9 @@ impl Zone {
         let e = self.entities.get_mut(&id).unwrap();
         let speed = self.pack.classes[e.def as usize].move_speed;
         let p = e.player.as_mut().unwrap();
+        if p.handoff != Handoff::None {
+            return;
+        }
         if m.seq <= p.last_move_seq {
             return; // stale or duplicate
         }
@@ -460,6 +581,112 @@ impl Zone {
         if breaks {
             self.stop_cast(id, StopReason::Interrupted);
         }
+        self.check_portals(id, now);
+    }
+
+    /// Stepping into a portal starts a handoff to its zone.
+    fn check_portals(&mut self, id: EntityId, now: Ms) {
+        let e = &self.entities[&id];
+        if e.dead {
+            return;
+        }
+        let portal = self
+            .zone_def()
+            .portals
+            .iter()
+            .find(|p| dist_xz(p.pos, e.pos) <= p.radius)
+            .cloned();
+        let e = self.entities.get_mut(&id).unwrap();
+        let p = e.player.as_mut().unwrap();
+        let entered = portal.is_some() && !p.in_portal;
+        p.in_portal = portal.is_some();
+        let (Some(portal), true) = (portal, entered) else {
+            return;
+        };
+        let e = &self.entities[&id];
+        let c = e.client().unwrap();
+        if e.player.as_ref().unwrap().character == 0 {
+            self.system(c, "Portals need the login service (this is a dev login).");
+            return;
+        }
+        if e.in_combat(now) {
+            self.system(c, "You can't travel while in combat. Step out and back in.");
+            return;
+        }
+        self.begin_handoff(id, portal.to_zone.clone(), portal.to_pos, None);
+    }
+
+    /// Save the character at its destination, then ask the world service
+    /// where to connect. `avoid_layer` is set when this layer is merging.
+    pub fn begin_handoff(&mut self, id: EntityId, zone: String, pos: [f32; 3], avoid_layer: Option<u16>) {
+        let Some(e) = self.entities.get_mut(&id) else {
+            return;
+        };
+        let p = e.player.as_mut().unwrap();
+        if p.handoff != Handoff::None || p.character == 0 {
+            return;
+        }
+        p.handoff = Handoff::Pending { zone: zone.clone(), pos };
+        let (client, character, account) = (p.client_id, p.character, p.account);
+        e.moving = false;
+        e.queued = None;
+        e.caster.cancel();
+        // The save goes first on the same queue, so the destination zone
+        // always loads the character where the portal put it.
+        self.save_progress(id);
+        self.svc.push(SvcReq::Place {
+            client,
+            character,
+            account,
+            zone,
+            avoid_layer,
+        });
+    }
+
+    /// The world service answered a handoff.
+    pub fn on_placed(&mut self, client: ClientId, result: Result<services::PlaceResponse, String>, now: Ms) {
+        let Some(&id) = self.clients.get(&client) else {
+            return;
+        };
+        let e = self.entities.get_mut(&id).unwrap();
+        let p = e.player.as_mut().unwrap();
+        let Handoff::Pending { zone, pos } = p.handoff.clone() else {
+            return;
+        };
+        match result.and_then(|r| {
+            use base64::Engine;
+            let token = base64::engine::general_purpose::STANDARD
+                .decode(&r.token)
+                .map_err(|e| e.to_string())?;
+            Ok((r, token))
+        }) {
+            Ok((r, token)) => {
+                p.handoff = Handoff::Sent {
+                    zone,
+                    pos,
+                    kick_at: now + 5000,
+                };
+                let zone_idx = self.pack.zone_index(&r.zone).unwrap_or(0);
+                self.send(
+                    client,
+                    ServerMsg::Handoff {
+                        addr: r.addr,
+                        token,
+                        zone: zone_idx,
+                        layer: r.layer,
+                    },
+                );
+            }
+            Err(err) => {
+                // Stay here; save the real position again.
+                p.handoff = Handoff::None;
+                p.dirty = true;
+                let back = e.pos;
+                p.validator.reset(now, back);
+                self.system(client, format!("Travel failed: {err}"));
+                self.save_progress(id);
+            }
+        }
     }
 
     pub fn handle(&mut self, client_id: ClientId, msg: ClientMsg, now: Ms, now_us: u64, rtt_ms: Ms) {
@@ -467,8 +694,19 @@ impl Zone {
             return;
         };
         let e = self.entities.get_mut(&id).unwrap();
-        e.player.as_mut().unwrap().rtt_ms = rtt_ms;
+        let p = e.player.as_mut().unwrap();
+        p.rtt_ms = rtt_ms;
+        if p.handoff != Handoff::None {
+            return;
+        }
         match msg {
+            ClientMsg::UseItem { .. } | ClientMsg::Unequip { .. } | ClientMsg::Destroy { .. } => {
+                self.handle_item(id, &msg, now);
+            }
+            ClientMsg::Chat { .. }
+            | ClientMsg::PartyInvite { .. }
+            | ClientMsg::PartyAccept
+            | ClientMsg::PartyLeave => self.handle_social(id, msg, now),
             ClientMsg::Cast {
                 seq,
                 ability,
@@ -714,6 +952,11 @@ impl Zone {
                     let (amount, crit) = self.roll(base + coeff_spellpower * sp, crit_chance);
                     self.heal(caster, caster, amount, ability, crit);
                 }
+                Effect::RestoreMana { amount } => {
+                    if let Some(c) = self.entities.get_mut(&caster) {
+                        c.caster.mana = (c.caster.mana + amount).min(c.caster.max_mana);
+                    }
+                }
                 Effect::ApplyAura { aura } => {
                     let aura_id = self.pack.aura_index(aura).expect("validated at load");
                     let def = &self.pack.auras[aura_id as usize];
@@ -874,9 +1117,6 @@ impl Zone {
             self.on_mob_killed(victim, &xp_to, t);
         }
     }
-
-    /// Hook for rewards; Phase 2 adds XP and loot here.
-    fn on_mob_killed(&mut self, _mob: EntityId, _tapped_by: &[EntityId], _t: Ms) {}
 
     /// Process every combat timer that has fallen due, each at its own
     /// logical timestamp, so nothing is rounded to a tick boundary.

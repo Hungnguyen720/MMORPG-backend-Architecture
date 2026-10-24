@@ -3,6 +3,7 @@
 //! `ClientSession`, and the headless bots drive the same type.
 
 pub mod brain;
+pub mod login;
 mod transport;
 
 use std::collections::{HashMap, VecDeque};
@@ -11,7 +12,9 @@ use std::time::{Instant, SystemTime};
 
 use combat_core::codec::{self, EntState, MoveInput, dequantize_facing, dequantize_pos, flags};
 use combat_core::movement::{ZoneGeometry, dist_xz};
-use combat_core::protocol::{self, ClientMsg, ServerMsg, StopReason};
+use combat_core::protocol::{
+    self, ChatChannel, ClientMsg, ItemStack, PartyMember, ServerMsg, StopReason,
+};
 use combat_core::{
     AbilityId, AuraId, CastCtx, CasterState, ContentPack, EntityId, EntityKind, FailReason, Ms,
     PROTOCOL_ID, TargetKind, channel, connection_config,
@@ -56,6 +59,29 @@ pub enum ClientEvent {
         seq: u32,
         ability: AbilityId,
         queue_gap_us: Option<u32>,
+    },
+    Chat {
+        channel: ChatChannel,
+        from: String,
+        text: String,
+    },
+    Xp {
+        gained: u32,
+        leveled: bool,
+    },
+    Looted {
+        items: Vec<(u16, u32)>,
+    },
+    InventoryChanged,
+    PartyChanged,
+    PartyInvite {
+        from: String,
+    },
+    /// We moved to another zone server (portal or layer merge). The world
+    /// state was cleared; `Welcome` from the new server follows.
+    ZoneChange {
+        zone: u16,
+        layer: u16,
     },
 }
 
@@ -139,36 +165,52 @@ pub struct ClientSession {
     pub snapshot_misses: u32,
     /// Something was queued for sending since the last flush.
     dirty: bool,
+    pub level: u32,
+    pub xp: u32,
+    pub xp_next: u32,
+    pub bag: Vec<ItemStack>,
+    pub equip: Vec<ItemStack>,
+    pub party: Vec<PartyMember>,
+    handoff: Option<(String, Vec<u8>, u16, u16)>,
+    /// Connections made so far: 1 + zone changes.
+    pub connections: u32,
+}
+
+/// A renet client and its UDP transport for one zone server.
+fn open(server: SocketAddr, auth: Auth) -> Result<(LagTransport, RenetClient), String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    let unix = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    let auth = match auth {
+        Auth::Dev { name } => {
+            let mut user_data = [0u8; 256];
+            let n = name.len().min(32);
+            user_data[..n].copy_from_slice(&name.as_bytes()[..n]);
+            ClientAuthentication::Unsecure {
+                protocol_id: PROTOCOL_ID,
+                client_id: unix.as_nanos() as u64
+                    ^ ((std::process::id() as u64) << 20)
+                    ^ fastrand_u64(),
+                server_addr: server,
+                user_data: Some(user_data),
+            }
+        }
+        Auth::Token(bytes) => {
+            let token = ConnectToken::read(&mut bytes.as_slice())
+                .map_err(|e| format!("bad connect token: {e}"))?;
+            ClientAuthentication::Secure {
+                connect_token: token,
+            }
+        }
+    };
+    let transport = LagTransport::new(unix, auth, socket).map_err(|e| e.to_string())?;
+    Ok((transport, RenetClient::new(connection_config())))
 }
 
 impl ClientSession {
     pub fn connect(pack: ContentPack, server: SocketAddr, auth: Auth) -> Result<Self, String> {
-        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
-        let unix = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
-        let auth = match auth {
-            Auth::Dev { name } => {
-                let mut user_data = [0u8; 256];
-                let n = name.len().min(32);
-                user_data[..n].copy_from_slice(&name.as_bytes()[..n]);
-                ClientAuthentication::Unsecure {
-                    protocol_id: PROTOCOL_ID,
-                    client_id: unix.as_nanos() as u64 ^ ((std::process::id() as u64) << 20)
-                        ^ fastrand_u64(),
-                    server_addr: server,
-                    user_data: Some(user_data),
-                }
-            }
-            Auth::Token(bytes) => {
-                let token = ConnectToken::read(&mut bytes.as_slice())
-                    .map_err(|e| format!("bad connect token: {e}"))?;
-                ClientAuthentication::Secure {
-                    connect_token: token,
-                }
-            }
-        };
-        let transport = LagTransport::new(unix, auth, socket).map_err(|e| e.to_string())?;
+        let (transport, client) = open(server, auth)?;
         let geo = ZoneGeometry::new(&pack.zones[0]);
         let caster = CasterState::new(pack.abilities.len(), pack.classes[0].max_mana);
         let bar = pack.class_bar(0);
@@ -178,7 +220,7 @@ impl ClientSession {
             epoch: now,
             last_update: now,
             transport,
-            client: RenetClient::new(connection_config()),
+            client,
             me: None,
             my_name: String::new(),
             class: 0,
@@ -209,7 +251,64 @@ impl ClientSession {
             last_queue_gap_us: None,
             snapshot_misses: 0,
             dirty: true,
+            level: 1,
+            xp: 0,
+            xp_next: 0,
+            bag: Vec::new(),
+            equip: Vec::new(),
+            party: Vec::new(),
+            handoff: None,
+            connections: 1,
         })
+    }
+
+    /// Leave this zone server and join the one in a handoff, keeping the
+    /// fake-lag settings. World state is rebuilt from the new snapshots.
+    fn switch_server(&mut self, addr: &str, token: Vec<u8>, zone: u16, layer: u16) {
+        let target: SocketAddr = match addr.parse() {
+            Ok(a) => a,
+            Err(e) => {
+                self.events
+                    .push(ClientEvent::Error(format!("bad handoff address: {e}")));
+                return;
+            }
+        };
+        let (latency, loss) = (self.transport.latency_ms, self.transport.loss);
+        self.client.disconnect();
+        let _ = self.transport.send_packets(&mut self.client);
+        self.transport.disconnect();
+        match open(target, Auth::Token(token)) {
+            Ok((t, c)) => {
+                self.transport = t;
+                self.client = c;
+            }
+            Err(e) => {
+                self.events.push(ClientEvent::Error(e));
+                return;
+            }
+        }
+        self.transport.latency_ms = latency;
+        self.transport.loss = loss;
+        self.connections += 1;
+        self.me = None;
+        self.entities.clear();
+        self.snapshots.clear();
+        self.last_snap_id = 0;
+        self.last_snap_time = 0.0;
+        self.server_offset = None;
+        self.target = None;
+        self.caster.cancel();
+        self.queued = None;
+        self.pending.clear();
+        self.locally_failed.clear();
+        self.moving = false;
+        self.dirty = true;
+        self.events.push(ClientEvent::ZoneChange { zone, layer });
+    }
+
+    /// Between leaving one zone server and the next one's Welcome.
+    pub fn changing_zone(&self) -> bool {
+        self.me.is_none() && self.connections > 1 && self.transport.disconnect_reason().is_none()
     }
 
     pub fn now(&self) -> Ms {
@@ -297,6 +396,10 @@ impl ClientSession {
                     self.on_message(msg);
                 }
             }
+        }
+        if let Some((addr, token, zone, layer)) = self.handoff.take() {
+            self.switch_server(&addr, token, zone, layer);
+            return;
         }
         let now = self.now();
         self.advance_prediction(now);
@@ -471,6 +574,54 @@ impl ClientSession {
         if self.dead() {
             self.send(channel::COMBAT, &ClientMsg::Release);
         }
+    }
+
+    /// Use or equip the item in a bag slot.
+    pub fn use_item(&mut self, slot: usize) {
+        self.send(channel::COMBAT, &ClientMsg::UseItem { slot: slot as u16 });
+    }
+
+    pub fn unequip(&mut self, equip_slot: usize) {
+        self.send(
+            channel::COMBAT,
+            &ClientMsg::Unequip {
+                equip_slot: equip_slot as u8,
+            },
+        );
+    }
+
+    pub fn destroy_item(&mut self, slot: usize) {
+        self.send(channel::COMBAT, &ClientMsg::Destroy { slot: slot as u16 });
+    }
+
+    pub fn chat(&mut self, channel: ChatChannel, text: &str) {
+        self.send(
+            channel::BULK,
+            &ClientMsg::Chat {
+                channel,
+                text: text.to_string(),
+            },
+        );
+    }
+
+    pub fn party_invite(&mut self, name: &str) {
+        self.send(channel::BULK, &ClientMsg::PartyInvite { name: name.into() });
+    }
+
+    pub fn party_accept(&mut self) {
+        self.send(channel::BULK, &ClientMsg::PartyAccept);
+    }
+
+    pub fn party_leave(&mut self) {
+        self.send(channel::BULK, &ClientMsg::PartyLeave);
+    }
+
+    /// Display name of an item index.
+    pub fn item_name(&self, item: u16) -> String {
+        self.pack
+            .items
+            .get(item as usize)
+            .map_or("?".into(), |i| i.name.clone())
     }
 
     fn predict_start(&mut self, seq: u32, ability: AbilityId, target: EntityId, t: Ms) {
@@ -712,6 +863,48 @@ impl ClientSession {
                     on_me: Some(target) == self.me,
                 });
             }
+            ServerMsg::Xp {
+                level,
+                xp,
+                next,
+                gained,
+            } => {
+                let leveled = level > self.level && gained > 0;
+                self.level = level;
+                self.xp = xp;
+                self.xp_next = next;
+                if gained > 0 {
+                    self.events.push(ClientEvent::Xp { gained, leveled });
+                }
+            }
+            ServerMsg::Inventory { bag, equip } => {
+                self.bag = bag;
+                self.equip = equip;
+                self.events.push(ClientEvent::InventoryChanged);
+            }
+            ServerMsg::Looted { items } => self.events.push(ClientEvent::Looted { items }),
+            ServerMsg::Chat {
+                channel,
+                from,
+                text,
+            } => self.events.push(ClientEvent::Chat {
+                channel,
+                from,
+                text,
+            }),
+            ServerMsg::PartyInvite { from } => self.events.push(ClientEvent::PartyInvite { from }),
+            ServerMsg::Party { members } => {
+                self.party = members;
+                self.events.push(ClientEvent::PartyChanged);
+            }
+            ServerMsg::Handoff {
+                addr,
+                token,
+                zone,
+                layer,
+            } => {
+                self.handoff = Some((addr, token, zone, layer));
+            }
             ServerMsg::Died { entity, killer } => {
                 if Some(entity) == self.me {
                     self.caster.cancel();
@@ -845,6 +1038,9 @@ impl ClientSession {
         }
         if ability == MELEE {
             return "Melee".into();
+        }
+        if ability == combat_core::ITEM_ABILITY {
+            return "Item".into();
         }
         self.pack
             .ability(ability)

@@ -20,6 +20,7 @@ mobs:
     wander_radius: 8
     move_speed: 7.5
     xp: 60
+    loot: wolf
     model: quadruped_wolf
     color: "#8c8c94"
     scale: 0.8
@@ -34,6 +35,7 @@ mobs:
     wander_radius: 6
     move_speed: 6.5
     xp: 75
+    loot: boar
     model: quadruped_boar
     color: "#7a5236"
     scale: 0.9
@@ -50,6 +52,7 @@ mobs:
     wander_radius: 0
     move_speed: 6.0
     xp: 110
+    loot: cultist
     model: humanoid_robed
     color: "#6b3fa0"
 
@@ -64,6 +67,70 @@ mobs:
     leash_radius: 30
     move_speed: 4.5
     xp: 600
+    loot: treant
     model: treant
     color: "#3f6b35"
     scale: 1.8
+
+  # ---- Hollow Crypt, levels 4 to 7 ----
+  - id: skeleton_warrior
+    name: Skeleton Warrior
+    level: 4
+    max_hp: 5200
+    melee_damage: 260
+    attack_ms: 2200
+    aggro_radius: 14
+    wander_radius: 4
+    move_speed: 6.0
+    xp: 160
+    loot: crypt_minor
+    model: humanoid_skeleton
+    color: "#d8d2c0"
+
+  - id: bone_hound
+    name: Bone Hound
+    level: 5
+    max_hp: 4600
+    melee_damage: 230
+    attack_ms: 1800
+    abilities: [rending_bite]
+    aggro_radius: 16
+    wander_radius: 10
+    move_speed: 8.0
+    xp: 180
+    loot: crypt_minor
+    model: quadruped_wolf
+    color: "#bdb6a2"
+    scale: 0.9
+
+  - id: crypt_cultist
+    name: Crypt Cultist
+    level: 6
+    max_hp: 5000
+    melee_damage: 120
+    abilities: [shadow_bolt]
+    spell_power: 260
+    mana: 1500
+    aggro_radius: 18
+    move_speed: 6.0
+    xp: 220
+    loot: crypt_minor
+    model: humanoid_robed
+    color: "#3b2a55"
+
+  - id: archivist_morvane
+    name: Archivist Morvane
+    level: 7
+    max_hp: 60000
+    melee_damage: 520
+    abilities: [shadow_bolt]
+    spell_power: 500
+    mana: 5000
+    aggro_radius: 14
+    leash_radius: 35
+    move_speed: 5.5
+    xp: 1500
+    loot: crypt_boss
+    model: humanoid_robed
+    color: "#5d1f7a"
+    scale: 1.5

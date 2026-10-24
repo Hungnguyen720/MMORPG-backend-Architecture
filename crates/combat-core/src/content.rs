@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{AbilityId, AuraId, Ms};
 
 /// Bumped whenever the compiled layout changes; old packs are rejected.
-pub const PACK_SCHEMA: u32 = 2;
+pub const PACK_SCHEMA: u32 = 3;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,10 +108,21 @@ pub struct TenantConfig {
     /// Bag slots for a new character.
     #[serde(default = "default_bag")]
     pub bag_slots: u16,
+    /// What a new character finds in its bags.
+    #[serde(default)]
+    pub starting_items: Vec<StartingItem>,
     /// UI theme, read by the client: colours by role. The asset pack can
     /// override any of these with its own theme file.
     #[serde(default)]
     pub theme: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartingItem {
+    pub item: String,
+    #[serde(default = "one_u32")]
+    pub count: u32,
 }
 
 fn one() -> f32 {
@@ -272,6 +283,10 @@ pub enum Effect {
     },
     ApplyAura {
         aura: String,
+    },
+    /// Mana for the caster (potions).
+    RestoreMana {
+        amount: f32,
     },
 }
 
@@ -603,7 +618,10 @@ impl ContentPack {
         let mut out = Vec::new();
         out.extend_from_slice(b"MMOPACK\0");
         out.extend_from_slice(&PACK_SCHEMA.to_le_bytes());
-        out.extend(bincode::serialize(self).expect("pack serializes"));
+        // JSON body: the content types use YAML-friendly serde attributes
+        // that a schema-less binary format cannot read back. Packs are a
+        // few tens of KB, downloaded once per content update.
+        out.extend(serde_json::to_vec(self).expect("pack serializes"));
         out
     }
 
@@ -618,7 +636,7 @@ impl ContentPack {
             ));
         }
         let mut pack: ContentPack =
-            bincode::deserialize(&bytes[12..]).map_err(|e| format!("corrupt pack: {e}"))?;
+            serde_json::from_slice(&bytes[12..]).map_err(|e| format!("corrupt pack: {e}"))?;
         pack.finish()?;
         Ok(pack)
     }
@@ -676,6 +694,11 @@ impl ContentPack {
         }
         if self.classes.is_empty() {
             return Err("pack has no classes".into());
+        }
+        for si in &t.starting_items {
+            if self.item_index(&si.item).is_none() {
+                return Err(format!("tenant.starting_items: unknown item '{}'", si.item));
+            }
         }
         for c in &self.classes {
             if c.abilities.is_empty() || c.abilities.len() > 9 {
@@ -843,4 +866,21 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
         h = h.wrapping_mul(0x0100_0000_01b3);
     }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compiled_pack_round_trips_with_the_same_hash() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tenants/default");
+        let pack = ContentPack::load_dir(dir).unwrap();
+        let bytes = pack.to_bytes();
+        let back = ContentPack::from_bytes(&bytes).unwrap();
+        assert_eq!(back.hash, pack.hash);
+        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.items.len(), pack.items.len());
+        assert!(ContentPack::from_bytes(b"MMOPACK\0\x02\0\0\0{}").is_err());
+    }
 }

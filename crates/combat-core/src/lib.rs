@@ -24,6 +24,11 @@ pub const MAX_LATENCY_ALLOWANCE_MS: Ms = 100;
 /// Extra range granted when either side is moving.
 pub const RANGE_LEEWAY: f32 = 2.0;
 
+/// Ability id in `Hit` messages for mob melee swings.
+pub const MELEE_ABILITY: AbilityId = u16::MAX;
+/// Ability id in `Hit` messages for item effects (potions).
+pub const ITEM_ABILITY: AbilityId = u16::MAX - 1;
+
 pub const PROTOCOL_ID: u64 = 0x4d4d_4f45_4e47_0002; // "MMOENG" v2
 pub const DEFAULT_PORT: u16 = 5000;
 

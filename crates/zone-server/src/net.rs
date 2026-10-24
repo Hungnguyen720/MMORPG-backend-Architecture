@@ -37,6 +37,8 @@ pub enum NetIn {
         msg: ClientMsg,
         rtt_ms: u64,
     },
+    /// An answer or event from the services thread.
+    Svc(crate::svc::SvcEvent),
 }
 
 pub enum NetOut {
@@ -46,7 +48,6 @@ pub enum NetOut {
 }
 
 pub struct NetConfig {
-    pub bind: SocketAddr,
     pub public: SocketAddr,
     pub max_clients: usize,
     pub auth: ServerAuthentication,
@@ -56,13 +57,12 @@ pub struct NetConfig {
 /// Bind the socket and start the network thread.
 pub fn spawn(
     cfg: NetConfig,
+    socket: UdpSocket,
     to_sim: Sender<NetIn>,
     from_sim: Receiver<NetOut>,
     shared: Shared,
     name: String,
 ) -> Arc<AtomicBool> {
-    let socket =
-        UdpSocket::bind(cfg.bind).unwrap_or_else(|e| panic!("binding UDP {}: {e}", cfg.bind));
     let alive = Arc::new(AtomicBool::new(true));
     let alive2 = alive.clone();
     std::thread::Builder::new()

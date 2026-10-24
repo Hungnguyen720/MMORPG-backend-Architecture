@@ -240,7 +240,7 @@ impl Zone {
             m.next_attack = now + def.attack_ms as Ms;
             let (amount, crit) = self.roll(def.melee_damage, 0.05);
             // Ability id 0 with no aura reads as "melee" on the client.
-            self.damage(id, target, amount, u16::MAX, None, crit, now);
+            self.damage(id, target, amount, combat_core::MELEE_ABILITY, None, crit, now);
         }
     }
 

@@ -1,0 +1,86 @@
+== 1. log in, level across two zones, log out
+[    0.0s] registered e2e24614@example.com
+[    0.0s] content pack "Elderwood Online" 0d2e4f3d83527b63 (downloaded)
+[    0.0s] created Testrunner the spellweaver
+[    0.0s] Testrunner (level 1) enters elderwood layer 1 at 127.0.0.1:5000
+[    0.0s] start: Saved { zone: "elderwood", level: 1, xp: 0, items: {"mana_draught": 2, "minor_healing_potion": 3} }
+[    0.0s] grinding in Elderwood near (70, -60) to level 3
+[   23.5s] looted 2x Wolf Pelt
+[   30.5s] looted 1x Wolf Pelt
+[   48.5s] looted 1x Wolf Pelt
+[   50.7s] LEVEL UP: level 2 (60 xp from that kill)
+[   50.7s] looted 2x Wolf Pelt
+[   50.7s] system: You reached level 2!
+[   55.8s] looted 2x Wolf Pelt
+[   63.5s] looted 1x Wolf Pelt
+[   65.7s] looted 1x Wolf Pelt
+[   72.9s] looted 1x Minor Healing Potion
+[   82.8s] looted 1x Minor Healing Potion
+[   88.0s] looted 2x Wolf Pelt
+[   93.7s] looted 1x Wolf Pelt, 1x Minor Healing Potion
+[   98.9s] looted 1x Wolf Pelt
+[  123.1s] looted 1x Wolf Pelt
+[  133.9s] looted 1x Minor Healing Potion
+[  138.2s] looted 1x Wolf Pelt
+[  144.7s] looted 2x Wolf Pelt
+[  151.9s] looted 1x Wolf Pelt
+[  156.9s] looted 2x Wolf Pelt
+[  159.0s] LEVEL UP: level 3 (54 xp from that kill)
+[  159.0s] looted 2x Wolf Pelt, 1x Minor Healing Potion
+[  159.0s] system: You reached level 3!
+[  159.0s] level 3 reached: 24 kills, 1 deaths, 3 potions, 28 items looted
+[  159.0s] walking to the Hollow Crypt portal
+[  159.1s] system: That item isn't ready yet.
+[  166.3s] looted 2x Wolf Pelt
+[  171.9s] looted 1x Wolf Pelt
+[  179.0s] looted 1x Wolf Pelt
+[  198.6s] looted 2x Wolf Pelt
+[  202.2s] looted 2x Wolf Pelt
+[  207.8s] arrived in Hollow Crypt
+[  207.8s] grinding in Hollow Crypt near (-40, 40) to level 4
+[  227.0s] looted 2x Bone Dust
+[  238.0s] looted 3x Bone Dust
+[  255.9s] looted 1x Bone Dust
+[  261.9s] looted 3x Bone Dust
+[  273.3s] LEVEL UP: level 4 (176 xp from that kill)
+[  273.3s] looted 1x Mana Draught
+[  273.3s] system: You reached level 4!
+[  273.3s] level 4 reached: 7 kills, 0 deaths, 2 potions, 10 items looted
+[  273.4s] system: That item isn't ready yet.
+[  273.8s] end: Saved { zone: "hollow_crypt", level: 4, xp: 58, items: {"bone_dust": 9, "mana_draught": 3, "minor_healing_potion": 3, "wolf_pelt": 31} }
+[  274.0s] logged out
+== 2. log back in: everything is where we left it
+[    0.0s] content pack "Elderwood Online" 0d2e4f3d83527b63 (downloaded)
+[    0.0s] Testrunner (level 4) enters hollow_crypt layer 1 at 127.0.0.1:5001
+[    0.0s] expected: Saved { zone: "hollow_crypt", level: 4, xp: 58, items: {"bone_dust": 9, "mana_draught": 3, "minor_healing_potion": 3, "wolf_pelt": 31} }
+[    0.0s] got:      Saved { zone: "hollow_crypt", level: 4, xp: 58, items: {"bone_dust": 9, "mana_draught": 3, "minor_healing_potion": 3, "wolf_pelt": 31} }
+[    0.2s] logged out
+[    0.2s] PASS: character, level and every item survived
+== 3. loot an item, then SIGKILL the crypt zone process
+[    0.0s] content pack "Elderwood Online" 0d2e4f3d83527b63 (downloaded)
+[    0.0s] Testrunner (level 4) enters hollow_crypt layer 1 at 127.0.0.1:5001
+[    0.0s] fighting until something drops
+[    7.4s] looted 1x Bone Dust, 1x Gravecloth Mantle
+[    7.7s] inventory now: {"bone_dust": 10, "gravecloth_mantle": 1, "mana_draught": 3, "minor_healing_potion": 3, "wolf_pelt": 31}
+[    7.7s] HOLDING: kill the zone process now
+   kill -9 zone-b (pid 22764)
+./scripts/e2e.sh: line 48: 22764 Killed                  $BIN/zone-server "${COMMON[@]}" --zone hollow_crypt:5001 --metrics 9101 --control 7101 --name zone-b --ports 5150-5199 >> "$LOGS/zone-b.log" 2>&1
+[   23.0s] zone server went away (as planned)
+== 4. log back in after the crash: the looted item is still there
+[    0.0s] content pack "Elderwood Online" 0d2e4f3d83527b63 (downloaded)
+[    0.0s] play: that character is still online; try again in half a minute; retrying
+[    2.0s] play: that character is still online; try again in half a minute; retrying
+[    4.0s] play: that character is still online; try again in half a minute; retrying
+[    6.0s] play: that character is still online; try again in half a minute; retrying
+[    8.0s] play: that character is still online; try again in half a minute; retrying
+[   10.0s] Testrunner (level 4) enters hollow_crypt layer 1 at 127.0.0.1:5001
+[   10.0s] expected: Saved { zone: "hollow_crypt", level: 4, xp: 218, items: {"bone_dust": 10, "gravecloth_mantle": 1, "mana_draught": 3, "minor_healing_potion": 3, "wolf_pelt": 31} }
+[   10.0s] got:      Saved { zone: "hollow_crypt", level: 4, xp: 58, items: {"bone_dust": 10, "gravecloth_mantle": 1, "mana_draught": 3, "minor_healing_potion": 3, "wolf_pelt": 31} }
+[   10.2s] logged out
+[   10.2s] PASS: character, level and every item survived
+== economy log (rare drops written the moment they dropped)
+ event | item | count | at 
+-------+------+-------+----
+(0 rows)
+
+E2E PASS

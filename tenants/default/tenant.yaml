@@ -8,6 +8,9 @@ tenant:
   start_zone: elderwood
   layer_soft_cap: 150
   bag_slots: 20
+  starting_items:
+    - { item: minor_healing_potion, count: 3 }
+    - { item: mana_draught, count: 2 }
   theme:
     accent: "#5ab4ff"
     panel: "#14171ecc"

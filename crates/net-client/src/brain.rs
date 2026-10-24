@@ -18,6 +18,10 @@ pub struct BotStats {
     pub deaths: u32,
     pub errors: u32,
     pub corrections: u32,
+    pub potions: u32,
+    pub xp: u64,
+    pub items_looted: u32,
+    pub zone_changes: u32,
 }
 
 pub struct Brain {
@@ -33,6 +37,9 @@ pub struct Brain {
     /// If false, the bot only walks around (pure movement load).
     pub fight: bool,
     pub stats: BotStats,
+    /// Every event the brain saw this frame, for callers that care.
+    pub seen: Vec<ClientEvent>,
+    next_potion: Ms,
 }
 
 impl Brain {
@@ -49,6 +56,8 @@ impl Brain {
             last_tick: 0,
             fight: true,
             stats: BotStats::default(),
+            seen: Vec::new(),
+            next_potion: 0,
         }
     }
 
@@ -72,12 +81,13 @@ impl Brain {
             s.pos = p;
             self.stats.corrections += 1;
         }
+        self.seen.clear();
         for e in s.take_events() {
-            match e {
+            match &e {
                 ClientEvent::Confirmed { queue_gap_us, .. } => {
                     self.stats.casts_confirmed += 1;
                     if let Some(g) = queue_gap_us {
-                        self.stats.queue_gaps_us.push(g);
+                        self.stats.queue_gaps_us.push(*g);
                     }
                 }
                 ClientEvent::Hit {
@@ -85,9 +95,14 @@ impl Brain {
                     mine: true,
                     heal: false,
                     ..
-                } => self.stats.damage += amount as f64,
+                } => self.stats.damage += *amount as f64,
+                ClientEvent::Xp { gained, .. } => self.stats.xp += *gained as u64,
+                ClientEvent::Looted { items } => {
+                    self.stats.items_looted += items.iter().map(|i| i.1).sum::<u32>()
+                }
+                ClientEvent::ZoneChange { .. } => self.stats.zone_changes += 1,
                 ClientEvent::Died { entity, .. } => {
-                    if Some(entity) == s.me {
+                    if Some(*entity) == s.me {
                         self.stats.deaths += 1;
                     } else {
                         self.stats.kills += 1;
@@ -96,6 +111,7 @@ impl Brain {
                 ClientEvent::Error(_) => self.stats.errors += 1,
                 _ => {}
             }
+            self.seen.push(e);
         }
         if !s.is_connected() {
             return;
@@ -109,6 +125,7 @@ impl Brain {
             return;
         }
         self.dead_since = None;
+        self.maybe_potion(s, now);
 
         if self.fight {
             if s.target.is_none_or(|t| !s.is_hostile(t) || s.entities[&t].has_flag(flags::PASSIVE)) {
@@ -154,7 +171,35 @@ impl Brain {
         }
     }
 
-    fn walk_towards(&mut self, s: &mut ClientSession, to: [f32; 3], dt: f32) {
+    /// Drink a healing potion below 35 % health, like a careful player.
+    fn maybe_potion(&mut self, s: &mut ClientSession, now: Ms) {
+        if now < self.next_potion {
+            return;
+        }
+        let Some(st) = s.my_state() else {
+            return;
+        };
+        if st.max_hp == 0 || (st.hp as f32) > st.max_hp as f32 * 0.35 {
+            return;
+        }
+        let potion = s.bag.iter().position(|slot| {
+            slot.is_some_and(|(item, _)| {
+                let def = &s.pack.items[item as usize];
+                def.on_use
+                    .iter()
+                    .any(|e| matches!(e, combat_core::Effect::Heal { .. }))
+            })
+        });
+        if let Some(slot) = potion {
+            s.use_item(slot);
+            self.stats.potions += 1;
+            self.next_potion = now + 31_000;
+        } else {
+            self.next_potion = now + 5_000;
+        }
+    }
+
+    pub fn walk_towards(&mut self, s: &mut ClientSession, to: [f32; 3], dt: f32) {
         let (dx, dz) = (to[0] - s.pos[0], to[2] - s.pos[2]);
         let d = (dx * dx + dz * dz).sqrt().max(0.001);
         let step = (s.move_speed() * dt).min(d);

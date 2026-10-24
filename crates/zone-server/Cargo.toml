@@ -14,3 +14,12 @@ renetcode = "2.0.0"
 socket2 = { version = "0.5", features = ["all"] }
 libc = "0.2"
 crossbeam-channel = "0.5"
+axum = "0.8"
+base64 = "0.22"
+futures-util = "0.3"
+persistence = { path = "../persistence" }
+redis = { version = "0.27", features = ["tokio-comp", "aio", "script"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+services = { path = "../services" }
+tokio = { version = "1", features = ["full"] }

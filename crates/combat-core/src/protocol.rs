@@ -22,6 +22,36 @@ pub enum ClientMsg {
     CancelCast,
     /// Dead players come back at the zone's graveyard.
     Release,
+    // --- Channel BULK: inventory, chat, party ---
+    /// Use (consumable) or equip (gear) the item in a bag slot.
+    UseItem { slot: u16 },
+    Unequip { equip_slot: u8 },
+    Destroy { slot: u16 },
+    Chat { channel: ChatChannel, text: String },
+    PartyInvite { name: String },
+    PartyAccept,
+    PartyLeave,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatChannel {
+    /// Players within 40 m on the same layer.
+    Say,
+    /// Everyone online in this game.
+    World,
+    Party,
+    Whisper(String),
+    /// Server notices (never sent by clients).
+    System,
+}
+
+/// One bag or equipment slot: item index in the pack and stack count.
+pub type ItemStack = Option<(u16, u32)>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PartyMember {
+    pub name: String,
+    pub leader: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +109,43 @@ pub enum ServerMsg {
     /// The server moved us: respawn, failed movement check, zone entry.
     Correction {
         pos: [f32; 3],
+    },
+    // --- Channel BULK ---
+    /// Experience after a change. `gained` is 0 on login.
+    Xp {
+        level: u32,
+        xp: u32,
+        /// XP needed for the next level, 0 at the cap.
+        next: u32,
+        gained: u32,
+    },
+    /// Full inventory after any change: bag slots then equipment slots.
+    Inventory {
+        bag: Vec<ItemStack>,
+        equip: Vec<ItemStack>,
+    },
+    /// Items just added to the bag (personal auto-loot).
+    Looted {
+        items: Vec<(u16, u32)>,
+    },
+    Chat {
+        channel: ChatChannel,
+        from: String,
+        text: String,
+    },
+    PartyInvite {
+        from: String,
+    },
+    Party {
+        members: Vec<PartyMember>,
+    },
+    /// Leave this zone server and connect to another with this token.
+    /// Sent on portals and when a layer merges away.
+    Handoff {
+        addr: String,
+        token: Vec<u8>,
+        zone: u16,
+        layer: u16,
     },
 }
 

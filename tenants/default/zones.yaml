@@ -36,3 +36,36 @@ zones:
       - { mob: wild_boar, pos: [-110, 0, -60], count: 6, radius: 20, respawn_ms: 20000 }
       - { mob: cultist_adept, pos: [50, 0, 70], count: 6, radius: 12, respawn_ms: 25000 }
       - { mob: elder_treant, pos: [-100, 0, 110], respawn_ms: 120000 }
+    portals:
+      - { pos: [130, 0, -135], radius: 3, to_zone: hollow_crypt, to_pos: [0, 0, 80], name: Hollow Crypt }
+
+  - id: hollow_crypt
+    name: Hollow Crypt
+    half_extent: [100, 100]
+    player_spawn: [0, 0, 80]
+    graveyard: [0, 0, 85]
+    scene: crypt
+    ground_color: "#2b2a30"
+    blockers:
+      # Entrance hall walls.
+      - { center: [-12, 70], size: [2, 30], height: 5 }
+      - { center: [12, 70], size: [2, 30], height: 5 }
+      # Ossuary rows.
+      - { center: [-40, 20], size: [30, 2], height: 4 }
+      - { center: [40, 20], size: [30, 2], height: 4 }
+      - { center: [-40, -10], size: [30, 2], height: 4 }
+      - { center: [40, -10], size: [30, 2], height: 4 }
+      # Boss chamber, gap in the middle of its south wall.
+      - { center: [-24, -50], size: [32, 2], height: 6 }
+      - { center: [24, -50], size: [32, 2], height: 6 }
+      - { center: [-40, -70], size: [2, 40], height: 6 }
+      - { center: [40, -70], size: [2, 40], height: 6 }
+    spawns:
+      - { mob: skeleton_warrior, pos: [-40, 0, 40], count: 6, radius: 14, respawn_ms: 25000 }
+      - { mob: skeleton_warrior, pos: [40, 0, 40], count: 6, radius: 14, respawn_ms: 25000 }
+      - { mob: bone_hound, pos: [-45, 0, 5], count: 5, radius: 10, respawn_ms: 25000 }
+      - { mob: crypt_cultist, pos: [45, 0, 5], count: 5, radius: 10, respawn_ms: 30000 }
+      - { mob: crypt_cultist, pos: [0, 0, -30], count: 4, radius: 10, respawn_ms: 30000 }
+      - { mob: archivist_morvane, pos: [0, 0, -75], respawn_ms: 300000 }
+    portals:
+      - { pos: [0, 0, 95], radius: 3, to_zone: elderwood, to_pos: [124, 0, -129], name: Elderwood }

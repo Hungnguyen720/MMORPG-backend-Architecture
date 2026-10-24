@@ -5,8 +5,11 @@
 use std::net::ToSocketAddrs;
 
 use combat_core::codec::flags;
+use combat_core::content::EquipSlot;
+use combat_core::protocol::ChatChannel;
 use combat_core::{ContentPack, EntityKind};
 use godot::prelude::*;
+use net_client::login::LoginClient;
 use net_client::{Auth, ClientEvent, ClientSession};
 
 struct EngineExtension;
@@ -18,6 +21,7 @@ unsafe impl ExtensionLibrary for EngineExtension {}
 #[class(base = Node, init)]
 pub struct CombatClient {
     session: Option<ClientSession>,
+    login: Option<LoginClient>,
     base: Base<Node>,
 }
 
@@ -31,6 +35,23 @@ fn dict(pairs: &[(&str, Variant)]) -> VarDictionary {
 
 fn v3(p: [f32; 3]) -> Vector3 {
     Vector3::new(p[0], p[1], p[2])
+}
+
+fn err_or_empty(r: Result<(), String>) -> GString {
+    match r {
+        Ok(()) => GString::new(),
+        Err(e) => GString::from(&e),
+    }
+}
+
+fn channel_name(c: &ChatChannel) -> &'static str {
+    match c {
+        ChatChannel::Say => "say",
+        ChatChannel::World => "world",
+        ChatChannel::Party => "party",
+        ChatChannel::Whisper(_) => "whisper",
+        ChatChannel::System => "system",
+    }
 }
 
 fn resolve(host: &str, port: u16) -> Option<std::net::SocketAddr> {
@@ -58,6 +79,287 @@ impl CombatClient {
             }
             Err(e) => GString::from(&e),
         }
+    }
+
+    // ----- Login service -----
+
+    /// Log in to `url` (e.g. http://127.0.0.1:7000). "" on success.
+    #[func]
+    fn login(&mut self, url: GString, email: GString, password: GString) -> GString {
+        let mut lc = LoginClient::new(&url.to_string());
+        let r = lc.login(&email.to_string(), &password.to_string());
+        if r.is_ok() {
+            self.login = Some(lc);
+        }
+        err_or_empty(r)
+    }
+
+    #[func]
+    fn register(&mut self, url: GString, email: GString, password: GString) -> GString {
+        let lc = LoginClient::new(&url.to_string());
+        err_or_empty(lc.register(&email.to_string(), &password.to_string()))
+    }
+
+    /// {characters: [{id, name, class, level, zone}], classes: [{id, name}], error}
+    #[func]
+    fn characters(&self) -> VarDictionary {
+        let Some(lc) = &self.login else {
+            return dict(&[("error", "not logged in".to_variant())]);
+        };
+        match lc.characters() {
+            Ok(list) => {
+                let mut chars = VarArray::new();
+                for c in list.characters {
+                    chars.push(
+                        &dict(&[
+                            ("id", c.id.to_variant()),
+                            ("name", c.name.to_variant()),
+                            ("class", c.class.to_variant()),
+                            ("level", (c.level as i64).to_variant()),
+                            ("zone", c.zone.to_variant()),
+                        ])
+                        .to_variant(),
+                    );
+                }
+                let mut classes = VarArray::new();
+                for c in list.classes {
+                    classes.push(
+                        &dict(&[("id", c.id.to_variant()), ("name", c.name.to_variant())])
+                            .to_variant(),
+                    );
+                }
+                dict(&[
+                    ("characters", chars.to_variant()),
+                    ("classes", classes.to_variant()),
+                    ("error", "".to_variant()),
+                ])
+            }
+            Err(e) => dict(&[("error", e.to_variant())]),
+        }
+    }
+
+    #[func]
+    fn create_character(&mut self, name: GString, class: GString) -> GString {
+        let Some(lc) = &self.login else {
+            return "not logged in".into();
+        };
+        err_or_empty(
+            lc.create_character(&name.to_string(), &class.to_string())
+                .map(|_| ()),
+        )
+    }
+
+    /// Download (or reuse the cached copy of) the tenant's asset pack into
+    /// `cache_dir`. Returns its path, "" if the server has none, or
+    /// "error: ..." on failure. Mount it with load_resource_pack before
+    /// building the world.
+    #[func]
+    fn sync_assets(&self, cache_dir: GString) -> GString {
+        let Some(lc) = &self.login else {
+            return "error: not logged in".into();
+        };
+        match lc.sync_assets(&cache_dir.to_string()) {
+            Ok(Some(p)) => GString::from(&p),
+            Ok(None) => GString::new(),
+            Err(e) => GString::from(&format!("error: {e}")),
+        }
+    }
+
+    /// Enter the world with a character. `local_content` is a tenant
+    /// directory or pack to try first; if its hash differs from the
+    /// server's, the server's pack is downloaded instead.
+    #[func]
+    fn play(&mut self, character: i64, local_content: GString) -> GString {
+        let Some(lc) = &self.login else {
+            return "not logged in".into();
+        };
+        let local = ContentPack::load(local_content.to_string()).ok();
+        let pack = match lc.sync_pack(local) {
+            Ok((p, downloaded)) => {
+                if downloaded {
+                    godot_print!("downloaded content pack \"{}\" {:016x}", p.tenant.name, p.hash);
+                }
+                p
+            }
+            Err(e) => return GString::from(&format!("content: {e}")),
+        };
+        let ticket = match lc.play(character) {
+            Ok(t) => t,
+            Err(e) => return GString::from(&e),
+        };
+        match ClientSession::connect(pack, ticket.addr, Auth::Token(ticket.token)) {
+            Ok(s) => {
+                self.session = Some(s);
+                GString::new()
+            }
+            Err(e) => GString::from(&e),
+        }
+    }
+
+    /// True between leaving one zone server and the next one's welcome.
+    #[func]
+    fn changing_zone(&self) -> bool {
+        self.session.as_ref().is_some_and(|s| s.changing_zone())
+    }
+
+    /// Why the connection ended, or "".
+    #[func]
+    fn disconnect_reason(&self) -> GString {
+        self.session
+            .as_ref()
+            .and_then(|s| s.disconnect_reason())
+            .map_or(GString::new(), |r| GString::from(&r))
+    }
+
+    // ----- Progress, inventory, chat, party -----
+
+    /// {level, xp, next}
+    #[func]
+    fn xp_info(&self) -> VarDictionary {
+        let Some(s) = &self.session else {
+            return VarDictionary::new();
+        };
+        dict(&[
+            ("level", (s.level as i64).to_variant()),
+            ("xp", (s.xp as i64).to_variant()),
+            ("next", (s.xp_next as i64).to_variant()),
+        ])
+    }
+
+    /// {bag: [item or null], equip: [item or null], equip_names: [..]}; an
+    /// item is {id, name, count, rarity, icon, description, equip, stats}.
+    #[func]
+    fn inventory(&self) -> VarDictionary {
+        let Some(s) = &self.session else {
+            return VarDictionary::new();
+        };
+        let item = |st: &combat_core::protocol::ItemStack| -> Variant {
+            let Some((i, n)) = st else {
+                return Variant::nil();
+            };
+            let Some(d) = s.pack.items.get(*i as usize) else {
+                return Variant::nil();
+            };
+            let rarity = format!("{:?}", d.rarity).to_lowercase();
+            let mut stats = Vec::new();
+            if d.stats.max_hp > 0.0 {
+                stats.push(format!("+{} Health", d.stats.max_hp));
+            }
+            if d.stats.max_mana > 0.0 {
+                stats.push(format!("+{} Mana", d.stats.max_mana));
+            }
+            if d.stats.spell_power > 0.0 {
+                stats.push(format!("+{} Spell Power", d.stats.spell_power));
+            }
+            dict(&[
+                ("id", d.id.to_variant()),
+                ("name", d.name.to_variant()),
+                ("count", (*n as i64).to_variant()),
+                ("rarity", rarity.to_variant()),
+                ("icon", d.icon.to_variant()),
+                ("description", d.description.to_variant()),
+                ("equip", d.equip.map_or("", |e| e.name()).to_variant()),
+                ("usable", (!d.on_use.is_empty()).to_variant()),
+                ("stats", stats.join("\n").to_variant()),
+            ])
+            .to_variant()
+        };
+        let mut bag = VarArray::new();
+        for st in &s.bag {
+            bag.push(&item(st));
+        }
+        let mut equip = VarArray::new();
+        for st in &s.equip {
+            equip.push(&item(st));
+        }
+        let mut names = VarArray::new();
+        for e in EquipSlot::ALL {
+            names.push(&e.name().to_variant());
+        }
+        dict(&[
+            ("bag", bag.to_variant()),
+            ("equip", equip.to_variant()),
+            ("equip_names", names.to_variant()),
+        ])
+    }
+
+    /// Use or equip the item in a bag slot.
+    #[func]
+    fn use_item(&mut self, slot: i32) {
+        if let Some(s) = &mut self.session
+            && slot >= 0
+        {
+            s.use_item(slot as usize);
+        }
+    }
+
+    #[func]
+    fn unequip(&mut self, equip_slot: i32) {
+        if let Some(s) = &mut self.session
+            && equip_slot >= 0
+        {
+            s.unequip(equip_slot as usize);
+        }
+    }
+
+    #[func]
+    fn destroy_item(&mut self, slot: i32) {
+        if let Some(s) = &mut self.session
+            && slot >= 0
+        {
+            s.destroy_item(slot as usize);
+        }
+    }
+
+    /// `channel` is say, world, party or whisper (then `to` names the target).
+    #[func]
+    fn chat(&mut self, channel: GString, text: GString, to: GString) {
+        let Some(s) = &mut self.session else {
+            return;
+        };
+        let ch = match channel.to_string().as_str() {
+            "world" => ChatChannel::World,
+            "party" => ChatChannel::Party,
+            "whisper" => ChatChannel::Whisper(to.to_string()),
+            _ => ChatChannel::Say,
+        };
+        s.chat(ch, &text.to_string());
+    }
+
+    #[func]
+    fn party_invite(&mut self, name: GString) {
+        if let Some(s) = &mut self.session {
+            s.party_invite(&name.to_string());
+        }
+    }
+
+    #[func]
+    fn party_accept(&mut self) {
+        if let Some(s) = &mut self.session {
+            s.party_accept();
+        }
+    }
+
+    #[func]
+    fn party_leave(&mut self) {
+        if let Some(s) = &mut self.session {
+            s.party_leave();
+        }
+    }
+
+    /// [{name, leader}]
+    #[func]
+    fn party(&self) -> VarArray {
+        let mut out = VarArray::new();
+        if let Some(s) = &self.session {
+            for m in &s.party {
+                out.push(
+                    &dict(&[("name", m.name.to_variant()), ("leader", m.leader.to_variant())])
+                        .to_variant(),
+                );
+            }
+        }
+        out
     }
 
     /// Call every frame.
@@ -181,6 +483,14 @@ impl CombatClient {
             ("dead", (st.flags & flags::DEAD != 0).to_variant()),
             ("in_combat", (st.flags & flags::IN_COMBAT != 0).to_variant()),
             ("name", s.my_name.to_variant()),
+            (
+                "model",
+                s.pack
+                    .classes
+                    .get(s.class as usize)
+                    .map_or(String::new(), |c| c.model.clone())
+                    .to_variant(),
+            ),
         ])
     }
 
@@ -432,6 +742,52 @@ impl CombatClient {
                 ClientEvent::Log(m) => {
                     dict(&[("type", "log".to_variant()), ("text", m.to_variant())])
                 }
+                ClientEvent::Chat {
+                    channel,
+                    from,
+                    text,
+                } => dict(&[
+                    ("type", "chat".to_variant()),
+                    ("channel", channel_name(&channel).to_variant()),
+                    ("from", from.to_variant()),
+                    ("text", text.to_variant()),
+                ]),
+                ClientEvent::Xp { gained, leveled } => dict(&[
+                    ("type", "xp".to_variant()),
+                    ("gained", (gained as i64).to_variant()),
+                    ("leveled", leveled.to_variant()),
+                    ("level", (s.level as i64).to_variant()),
+                ]),
+                ClientEvent::Looted { items } => {
+                    let names: Vec<String> = items
+                        .iter()
+                        .map(|(i, n)| {
+                            if *n > 1 {
+                                format!("{} x{n}", s.item_name(*i))
+                            } else {
+                                s.item_name(*i)
+                            }
+                        })
+                        .collect();
+                    dict(&[
+                        ("type", "looted".to_variant()),
+                        ("text", names.join(", ").to_variant()),
+                    ])
+                }
+                ClientEvent::InventoryChanged => dict(&[("type", "inventory".to_variant())]),
+                ClientEvent::PartyChanged => dict(&[("type", "party".to_variant())]),
+                ClientEvent::PartyInvite { from } => dict(&[
+                    ("type", "party_invite".to_variant()),
+                    ("from", from.to_variant()),
+                ]),
+                ClientEvent::ZoneChange { zone, layer } => dict(&[
+                    ("type", "zone_change".to_variant()),
+                    (
+                        "zone",
+                        s.pack.zones[zone as usize].name.to_variant(),
+                    ),
+                    ("layer", (layer as i64).to_variant()),
+                ]),
                 ClientEvent::Confirmed {
                     seq,
                     ability,

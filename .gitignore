@@ -1,2 +1,4 @@
 /target
 godot/.godot/
+/build/
+dump.rdb
