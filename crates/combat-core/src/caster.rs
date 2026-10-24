@@ -259,7 +259,11 @@ mod tests {
     use crate::content::ContentPack;
 
     fn pack() -> ContentPack {
-        ContentPack::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tenants/default")).unwrap()
+        ContentPack::load_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tenants/default"
+        ))
+        .unwrap()
     }
 
     fn ctx() -> CastCtx {
@@ -287,7 +291,10 @@ mod tests {
         let p = pack();
         let lance = idx(&p, "frost_lance");
         let c = CasterState::new(p.abilities.len(), 1000.0);
-        let blind = CastCtx { los: false, ..ctx() };
+        let blind = CastCtx {
+            los: false,
+            ..ctx()
+        };
         assert_eq!(
             c.check(lance, &p.abilities[lance as usize], 0, blind),
             Err(FailReason::LineOfSight)

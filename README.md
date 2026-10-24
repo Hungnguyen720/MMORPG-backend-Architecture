@@ -1,109 +1,145 @@
-# Phase 0: combat-feel prototype
+# MMO engine
 
-The first build from the [architecture doc](https://claude.ai/artifact/1CNGE2VbeBfsMDY6Lt7TCr). The point is to answer one question with your hands: does tab-target combat feel crisp at 150 ms and 2% packet loss?
+A white label engine for a 2.5D tab-target MMORPG, built from the
+[architecture doc](https://claude.ai/artifact/1CNGE2VbeBfsMDY6Lt7TCr): a Rust
+backend, UDP game traffic, and a Godot client. One engine build runs several
+games; each game (a "tenant") is a directory of YAML plus an asset pack.
 
-What's in it: one caster class with five abilities (hard cast, instant, channel, DoT, off-GCD cooldown), a training dummy, cast bar, GCD swipe, a 400 ms spell queue, WASD movement, and a debug panel that adds 0 to 250 ms of latency and 0 to 5% packet loss.
+| Phase | What it added | Write-up |
+|---|---|---|
+| 0 | Combat feel: casts, GCD, spell queue, prediction, fake lag | below |
+| 1 | Movement netcode, delta snapshots, interest grid, mobs, bot swarm | [docs/phase1.md](docs/phase1.md) |
+| 2 | Login, world service, Postgres and Redis, XP, loot, inventory, two zones with handoff, chat, party, content packs | [docs/phase2.md](docs/phase2.md) |
+| 3 | Second tenant (Ashfall) from data and assets only, layering, 1,000 bots in one zone | [docs/phase3.md](docs/phase3.md) |
+
+Every phase's done check passed; the logs and load test results are in `docs/`.
 
 ## Layout
 
 ```
 crates/
-  combat-core/   Shared rules: ability data, GCD, casts, channels, spell queue,
-                 movement checks, wire protocol. Linked by server AND client.
-  zone-server/   Authoritative UDP server (renet). 20 Hz snapshots, combat
-                 timers fire the moment they fall due.
-  net-client/    Engine-agnostic client: UDP + fake-lag transport, prediction,
-                 interpolation. Also builds the headless `bot`.
-  client-ext/    GDExtension (godot-rust) exposing `CombatClient` to GDScript.
-godot/
-  project.godot  Godot 4.5+ project. main.gd builds the arena and UI in code.
-  content/abilities.yaml   The class, abilities, auras and dummy. Data, not code.
+  combat-core/   Shared rules and wire protocol: content schema, GCD, casts,
+                 spell queue, movement checks, snapshot codec. Linked by the
+                 server, the bots and the client.
+  zone-server/   The simulation. One process hosts many zones and layers, one
+                 thread and UDP port each. 20 Hz world tick; combat timers fire
+                 the moment they fall due.
+  services/      login (accounts, sessions, characters, content download),
+                 world (layer placement, connect tokens, merging), packc.
+  persistence/   Postgres schema and queries.
+  net-client/    Engine-agnostic client: transport, prediction, interpolation,
+                 login. Also the bots: bot, swarm (load tests) and e2e.
+  client-ext/    GDExtension exposing the client to GDScript.
+godot/           The Godot 4.5 client. main.gd builds the world and UI in code.
+tenants/
+  default/       Elderwood Online (the original fantasy tenant)
+  ashfall/       Ashfall: Embers of the Pale King (dark fantasy), plus assets/
+scripts/         run-stack.sh, e2e.sh, layering-test.sh, build-assets.sh
 ```
 
-## Run it on your machine
+## Install once
 
-### 1. Install once
+- **Rust** (stable) from https://rustup.rs. On Windows, accept the Visual Studio
+  C++ build tools prompt.
+- **Godot 4.5 or newer**, the standard build (not .NET), from
+  https://godotengine.org/download. Tested with 4.5.1.
+- For the full stack only: **Postgres 14+** and **Redis 6+**, running locally.
 
-- **Rust** (stable) from https://rustup.rs. On Windows, accept the Visual Studio C++ build tools prompt.
-- **Godot 4.5 or newer**, the standard build (not the .NET one), from https://godotengine.org/download. Tested with 4.5.1.
-
-### 2. Build
-
-From the repo root:
+Then build from the repo root:
 
 ```sh
-cargo build                        # debug build: the GDExtension the Godot editor loads
-cargo build --release              # release build: server and bot
+cargo build                 # debug: the GDExtension the Godot editor loads
+cargo build --release       # release: servers, bots and tools
 ```
 
-The first build downloads crates and takes a few minutes.
+## Quick start: play without logging in
 
-### 3. Start the server
+Development mode needs no database: unsigned connects, nothing saved. This is
+the setup for the combat-feel test.
 
 ```sh
-cargo run --release -p zone-server
+cargo run --release -p zone-server      # Elderwood on UDP 5000
+godot --path godot                      # or open godot/project.godot and press F5
 ```
 
-It prints `zone-server listening on UDP 0.0.0.0:5000`. Leave it running. Every cast is logged; queued casts show how long after the caster was ready they fired, and every 10 s it prints a summary.
-
-### 4. Start the client
-
-Open Godot, click **Import**, pick `godot/project.godot`, then press **F5** (Run Project).
-
-Or from a terminal (with the Godot executable on your PATH):
-
-```sh
-godot --path godot
-```
-
-To join a server on another machine: `godot --path godot -- --server 192.168.1.20:5000`. Run the project twice to see another player (their cast bar shows on their nameplate).
-
-### 5. Play
+To join a server on another machine: `godot --path godot -- --server 192.168.1.20:5000`.
+Run the client twice to see another player.
 
 | Key | Action |
 | --- | --- |
 | W A S D | Move |
-| Tab, or click the dummy | Target |
-| 1 | Frost Lance, 2.0 s cast |
-| 2 | Ice Shard, instant |
-| 3 | Arcane Torrent, 3 s channel (breaks if you move) |
-| 4 | Searing Brand, damage over time |
-| 5 | Arcane Surge, off the GCD, 15 s cooldown |
+| Tab, or click | Target |
+| 1 to 6 | Abilities (hover for details) |
 | Esc | Clear target |
+| R | Release to the graveyard after dying |
+| B or I | Bags and equipment (left-click: use or equip, right-click: destroy) |
+| Enter | Chat: `/w Name hi`, `/p`, `/world`, `/invite Name`, `/accept`, `/leave` |
 
-Set the sliders in the top-right panel to **150 ms** and **2%** and play a rotation. Press the next ability during the last 400 ms of a cast or GCD: the button gets a yellow border (queued) and the cast starts the instant the previous one ends.
+The panel at the top right adds 0 to 250 ms of latency and 0 to 5% packet
+loss. Set it to 150 ms and 2% and play a rotation: press the next ability during
+the last 400 ms of a cast or GCD, the button gets a yellow border (queued), and
+the cast starts the instant the previous one ends.
 
-## What "done" means for Phase 0
-
-From the doc. At 150 ms and 2% loss:
-
-1. A queued rotation shows no gap between casts in the server log (under 5 ms).
-2. A cast bar never visibly corrects in normal play.
-3. It feels right to you.
-
-You can check the first one without a human:
+## Full stack: accounts, saving, zones and layers
 
 ```sh
-cargo run --release -p net-client --bin bot -- --latency 150 --loss 2 --seconds 30
+createuser -s mmo; psql -c "ALTER USER mmo PASSWORD 'mmo'" postgres   # once
+scripts/run-stack.sh default            # login :7000, world :7001, zones on UDP 5000+
+godot --path godot -- --login http://127.0.0.1:7000
 ```
 
-In the cloud build of this repo it reported a median gap of about 0.3 ms and a maximum under 1 ms.
+The client opens on a login screen: register, create a character, play. It
+downloads the tenant's content pack (and asset pack, if any) from the login
+service. `run-stack.sh` creates the tenant's database (`mmo_<tenant>`) and
+runs migrations on start. Login and world speak plain HTTP; put them behind TLS
+before anything leaves your machine.
 
-## Changing abilities
+Run a second game beside the first on the same build:
 
-Edit `godot/content/abilities.yaml`, restart the server and the client. Both load the same file; the client warns if its copy differs from the server's. The effect types the engine understands are `damage` and `apply_aura` for now; the full list from the doc gets added as classes need them.
+```sh
+scripts/build-assets.sh ashfall
+scripts/run-stack.sh ashfall 8000 6000
+godot --path godot -- --login http://127.0.0.1:8000
+```
+
+## Making a new game
+
+Copy `tenants/default/` and edit the YAML: `tenant.yaml` (name, XP curve, bag
+size, starting items, UI colours), `classes.yaml`, `abilities.yaml`,
+`mobs.yaml`, `zones.yaml` (walls, spawns, portals) and `items.yaml`. Check it
+with:
+
+```sh
+cargo run --release -p services --bin packc -- tenants/mygame -o build/mygame.pack
+```
+
+`packc` refuses a pack with a broken reference and says where. For models,
+icons and colours, put them under `tenants/mygame/assets/tenant/` the way
+`tenants/ashfall/assets/` does and run `scripts/build-assets.sh mygame`.
+
+## Tests
+
+```sh
+cargo test --workspace                                  # unit tests
+scripts/e2e.sh                                          # Phase 2 done check (Postgres + Redis)
+cargo run --release -p net-client --bin bot -- --latency 150 --loss 2 --seconds 30
+cargo run --release -p net-client --bin swarm -- --bots 200      # against a dev zone
+```
 
 ## Troubleshooting
 
-- **"Can't open dynamic library" or `CombatClient` not found in Godot**: run `cargo build` (debug) from the repo root, then reopen the project. The editor loads `target/debug/`.
+- **"Can't open dynamic library" or `CombatClient` not found in Godot**: run
+  `cargo build` (debug) from the repo root, then reopen the project. The editor
+  loads `target/debug/`.
 - **Windows: build fails because the .dll is in use**: close Godot, rebuild, reopen.
 - **macOS: the library is blocked**: run `xattr -dr com.apple.quarantine target/` once.
-- **Stuck on "Connecting..."**: the server isn't running, or a firewall is blocking UDP port 5000.
-- **"godot-rust compiled against newer Godot version"**: your Godot is older than 4.5; update it.
+- **Stuck on "Connecting..."**: the zone server isn't running, or a firewall blocks UDP.
+- **"that character is still online"**: the zone holding it crashed; presence
+  expires within 30 s.
+- **"godot-rust compiled against newer Godot version"**: update Godot to 4.5 or newer.
 
-## Shortcuts taken on purpose (fixed in later phases)
+## Not done yet
 
-- Connections are unauthenticated (netcode "unsecure" mode). Phase 2 adds the login service and signed connect tokens.
-- Messages use bincode. The bit-packed codec and delta snapshots come with the Phase 1 bandwidth work.
-- The arena is a flat square; the server checks speed and bounds but has no navmesh yet.
-- No facing requirement for casts, no NPC AI, the dummy never dies.
+- Combat-feel numbers are unchanged since Phase 0, waiting on a hands-on test.
+- No TLS on login and world, no auction house, trading, mail or quests.
+- Ashfall's art is generated placeholders; real Blender exports replace them file for file.

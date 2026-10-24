@@ -62,7 +62,11 @@ impl Inventory {
                 count: count as i32,
             })
         };
-        let bag = self.bag.iter().enumerate().filter_map(|(i, s)| row(i as i16, s));
+        let bag = self
+            .bag
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| row(i as i16, s));
         let eq = self
             .equip
             .iter()
@@ -270,7 +274,11 @@ impl Zone {
         let ids: Vec<EntityId> = self
             .entities
             .values()
-            .filter(|e| e.player.as_ref().is_some_and(|p| p.dirty && p.character != 0))
+            .filter(|e| {
+                e.player
+                    .as_ref()
+                    .is_some_and(|p| p.dirty && p.character != 0)
+            })
             .map(|e| e.id)
             .collect();
         for id in ids {

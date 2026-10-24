@@ -11,8 +11,8 @@ use combat_core::content::{Stats, TargetKind};
 use combat_core::movement::{MoveValidator, MoveVerdict, ZoneGeometry, dist_xz};
 use combat_core::protocol::{self, ClientMsg, ServerMsg, StopReason};
 use combat_core::{
-    AbilityId, AuraId, CastCtx, CasterState, ContentPack, Effect, EntityId, EntityKind,
-    FailReason, Ms, Started, channel,
+    AbilityId, AuraId, CastCtx, CasterState, ContentPack, Effect, EntityId, EntityKind, FailReason,
+    Ms, Started, channel,
 };
 use renet::ClientId;
 
@@ -69,10 +69,17 @@ pub struct PlayerCtl {
 pub enum Handoff {
     None,
     /// Waiting for the world service to place us. Inputs are ignored.
-    Pending { zone: String, pos: [f32; 3] },
+    Pending {
+        zone: String,
+        pos: [f32; 3],
+    },
     /// The client has its new address; it disconnects itself, or is
     /// kicked at `kick_at`.
-    Sent { zone: String, pos: [f32; 3], kick_at: Ms },
+    Sent {
+        zone: String,
+        pos: [f32; 3],
+        kick_at: Ms,
+    },
 }
 
 /// Everything needed to put a player in the world.
@@ -177,7 +184,9 @@ impl Entity {
         self.player.is_some()
     }
     pub fn evading(&self) -> bool {
-        self.mob.as_ref().is_some_and(|m| m.state == MobState::Evade)
+        self.mob
+            .as_ref()
+            .is_some_and(|m| m.state == MobState::Evade)
     }
     pub fn in_combat(&self, now: Ms) -> bool {
         self.combat_until > now
@@ -572,8 +581,7 @@ impl Zone {
         // ability allows casting on the move.
         let breaks = m.moving
             && m.seq > cast_move_seq
-            && e
-                .caster
+            && e.caster
                 .cast
                 .as_ref()
                 .is_some_and(|c| !self.pack.abilities[c.ability as usize].cast_while_moving);
@@ -618,7 +626,13 @@ impl Zone {
 
     /// Save the character at its destination, then ask the world service
     /// where to connect. `avoid_layer` is set when this layer is merging.
-    pub fn begin_handoff(&mut self, id: EntityId, zone: String, pos: [f32; 3], avoid_layer: Option<u16>) {
+    pub fn begin_handoff(
+        &mut self,
+        id: EntityId,
+        zone: String,
+        pos: [f32; 3],
+        avoid_layer: Option<u16>,
+    ) {
         let Some(e) = self.entities.get_mut(&id) else {
             return;
         };
@@ -626,7 +640,10 @@ impl Zone {
         if p.handoff != Handoff::None || p.character == 0 {
             return;
         }
-        p.handoff = Handoff::Pending { zone: zone.clone(), pos };
+        p.handoff = Handoff::Pending {
+            zone: zone.clone(),
+            pos,
+        };
         let (client, character, account) = (p.client_id, p.character, p.account);
         e.moving = false;
         e.queued = None;
@@ -644,7 +661,12 @@ impl Zone {
     }
 
     /// The world service answered a handoff.
-    pub fn on_placed(&mut self, client: ClientId, result: Result<services::PlaceResponse, String>, now: Ms) {
+    pub fn on_placed(
+        &mut self,
+        client: ClientId,
+        result: Result<services::PlaceResponse, String>,
+        now: Ms,
+    ) {
         let Some(&id) = self.clients.get(&client) else {
             return;
         };
@@ -689,7 +711,14 @@ impl Zone {
         }
     }
 
-    pub fn handle(&mut self, client_id: ClientId, msg: ClientMsg, now: Ms, now_us: u64, rtt_ms: Ms) {
+    pub fn handle(
+        &mut self,
+        client_id: ClientId,
+        msg: ClientMsg,
+        now: Ms,
+        now_us: u64,
+        rtt_ms: Ms,
+    ) {
         let Some(&id) = self.clients.get(&client_id) else {
             return;
         };
@@ -762,13 +791,18 @@ impl Zone {
                     } else {
                         let reason = e
                             .caster
-                            .check(ability, def, now, CastCtx {
-                                distance: None,
-                                moving: false,
-                                target_moving: false,
-                                los: true,
-                                dead: false,
-                            })
+                            .check(
+                                ability,
+                                def,
+                                now,
+                                CastCtx {
+                                    distance: None,
+                                    moving: false,
+                                    target_moving: false,
+                                    los: true,
+                                    dead: false,
+                                },
+                            )
                             .unwrap_err();
                         self.send(client_id, ServerMsg::CastFailed { seq, reason });
                     }
@@ -1067,7 +1101,14 @@ impl Zone {
         }
     }
 
-    pub fn heal(&mut self, source: EntityId, target: EntityId, amount: f32, ability: AbilityId, crit: bool) {
+    pub fn heal(
+        &mut self,
+        source: EntityId,
+        target: EntityId,
+        amount: f32,
+        ability: AbilityId,
+        crit: bool,
+    ) {
         let Some(tg) = self.entities.get_mut(&target) else {
             return;
         };
@@ -1273,8 +1314,11 @@ mod tests {
     use crate::interest::VIEW_CAP;
 
     fn zone() -> Zone {
-        let pack = ContentPack::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tenants/default"))
-            .unwrap();
+        let pack = ContentPack::load_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tenants/default"
+        ))
+        .unwrap();
         let idx = pack.zone_index("elderwood").unwrap();
         Zone::new(Arc::new(pack), idx, 1, 0)
     }
@@ -1326,7 +1370,10 @@ mod tests {
         z.entities.get_mut(&p).unwrap().pos = [0.0, 0.0, 150.0];
         z.relocate(p);
         z.tick_ai(4000, 0);
-        assert_eq!(z.entities[&wolf].mob.as_ref().unwrap().state, MobState::Evade);
+        assert_eq!(
+            z.entities[&wolf].mob.as_ref().unwrap().state,
+            MobState::Evade
+        );
         for t in 0..400 {
             z.tick_ai(4050 + t * 50, 0);
         }
@@ -1343,7 +1390,13 @@ mod tests {
             z.add_player(c, format!("P{c}"), 0, 1, None, 0);
         }
         let me = z.clients[&1];
-        z.entities.get_mut(&me).unwrap().player.as_mut().unwrap().target = far_wolf;
+        z.entities
+            .get_mut(&me)
+            .unwrap()
+            .player
+            .as_mut()
+            .unwrap()
+            .target = far_wolf;
         z.outbox.clear();
         z.snapshot(50);
         assert!(z.nets.values().all(|n| n.last_view <= VIEW_CAP + 4));

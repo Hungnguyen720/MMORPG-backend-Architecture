@@ -43,7 +43,10 @@ pub enum NetIn {
 
 pub enum NetOut {
     /// Messages to queue; `flush` sends packets right away.
-    Batch { msgs: Vec<Outgoing>, flush: bool },
+    Batch {
+        msgs: Vec<Outgoing>,
+        flush: bool,
+    },
     Kick(ClientId),
 }
 
@@ -132,7 +135,11 @@ fn run(
                 while let Some(bytes) = server.receive_message(client, ch) {
                     match protocol::decode::<ClientMsg>(&bytes) {
                         Some(msg) => {
-                            let _ = to_sim.send(NetIn::Msg { client, msg, rtt_ms });
+                            let _ = to_sim.send(NetIn::Msg {
+                                client,
+                                msg,
+                                rtt_ms,
+                            });
                         }
                         None => eprintln!("client {client}: undecodable message"),
                     }

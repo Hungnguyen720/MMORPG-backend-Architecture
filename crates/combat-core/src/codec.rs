@@ -63,7 +63,11 @@ impl BitWriter {
 
     pub fn write(&mut self, value: u32, bits: u32) {
         debug_assert!(bits <= 32);
-        let mask = if bits == 32 { u32::MAX } else { (1 << bits) - 1 };
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1 << bits) - 1
+        };
         self.acc |= ((value & mask) as u64) << self.bits;
         self.bits += bits;
         while self.bits >= 8 {
@@ -467,7 +471,11 @@ fn write_fields(w: &mut BitWriter, mask: u32, s: &EntState, old: Option<&EntStat
 }
 
 fn read_fields(r: &mut BitReader, s: &mut EntState, full: bool) -> Option<u32> {
-    let mask = if full { field::ALL } else { r.read(field::BITS)? };
+    let mask = if full {
+        field::ALL
+    } else {
+        r.read(field::BITS)?
+    };
     if mask & field::POS_XZ != 0 {
         if r.bit()? {
             let dx = read_signed(r, 9)?;
@@ -671,12 +679,53 @@ mod tests {
         assert!((d.facing - 1.0).abs() < 0.03);
     }
 
+    /// `cargo test --release -p combat-core encode_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn encode_cost() {
+        let base: Vec<(EntityId, EntState)> = (1..=80).map(|i| (i, st(i as f32, 1000))).collect();
+        let view: Vec<SnapEntity> = (1..=80)
+            .map(|i| SnapEntity {
+                id: i,
+                state: st(i as f32 + 0.3, 990),
+                due: true,
+                name: "Somebody",
+            })
+            .collect();
+        let t = std::time::Instant::now();
+        let n = 20000;
+        let mut bytes = 0;
+        for _ in 0..n {
+            let (b, k) = encode_snapshot(2, 0, Some((1, &base)), &view);
+            bytes += b.len() + k.len();
+        }
+        println!(
+            "encode 80 entities: {:.2} us ({bytes})",
+            t.elapsed().as_secs_f64() * 1e6 / n as f64
+        );
+    }
+
     #[test]
     fn delta_snapshot_round_trip() {
         let view1 = vec![
-            SnapEntity { id: 5, state: st(1.0, 1000), due: true, name: "" },
-            SnapEntity { id: 9, state: st(2.0, 1000), due: true, name: "Bob" },
-            SnapEntity { id: 300, state: st(3.0, 1000), due: true, name: "" },
+            SnapEntity {
+                id: 5,
+                state: st(1.0, 1000),
+                due: true,
+                name: "",
+            },
+            SnapEntity {
+                id: 9,
+                state: st(2.0, 1000),
+                due: true,
+                name: "Bob",
+            },
+            SnapEntity {
+                id: 300,
+                state: st(3.0, 1000),
+                due: true,
+                name: "",
+            },
         ];
         let (b1, known1) = encode_snapshot(1, 100, None, &view1);
         let d1 = decode_snapshot(&b1, &[]).unwrap();
@@ -689,15 +738,33 @@ mod tests {
         s5.cast = Some((2, 150));
         s5.set_auras([(1u16, 9000u32)].into_iter());
         let view2 = vec![
-            SnapEntity { id: 5, state: s5, due: true, name: "" },
-            SnapEntity { id: 9, state: st(9.0, 1), due: false, name: "Bob" },
-            SnapEntity { id: 400, state: st(4.0, 50), due: true, name: "" },
+            SnapEntity {
+                id: 5,
+                state: s5,
+                due: true,
+                name: "",
+            },
+            SnapEntity {
+                id: 9,
+                state: st(9.0, 1),
+                due: false,
+                name: "Bob",
+            },
+            SnapEntity {
+                id: 400,
+                state: st(4.0, 50),
+                due: true,
+                name: "",
+            },
         ];
         let (b2, known2) = encode_snapshot(2, 150, Some((1, &known1)), &view2);
         let d2 = decode_snapshot(&b2, &d1.entities).unwrap();
         assert_eq!(d2.entities, known2);
         assert_eq!(d2.entities.len(), 3);
-        assert_eq!(d2.entities[1].1, known1[1].1, "not-due entity keeps baseline");
+        assert_eq!(
+            d2.entities[1].1, known1[1].1,
+            "not-due entity keeps baseline"
+        );
         assert_eq!(d2.moved, vec![5, 400]);
         assert!(b2.len() < b1.len() + 20);
 
@@ -713,9 +780,28 @@ mod tests {
         b.pos = quantize_pos([1.35, 0.0, -1.35]);
         b.facing = 40;
         let base = vec![(7, a)];
-        let view = vec![SnapEntity { id: 7, state: b, due: true, name: "" }];
-        let (empty, _) = encode_snapshot(2, 0, Some((1, &base)), &[SnapEntity { id: 7, state: a, due: true, name: "" }]);
+        let view = vec![SnapEntity {
+            id: 7,
+            state: b,
+            due: true,
+            name: "",
+        }];
+        let (empty, _) = encode_snapshot(
+            2,
+            0,
+            Some((1, &base)),
+            &[SnapEntity {
+                id: 7,
+                state: a,
+                due: true,
+                name: "",
+            }],
+        );
         let (bytes, _) = encode_snapshot(2, 0, Some((1, &base)), &view);
-        assert!(bytes.len() - empty.len() <= 6, "{} bytes", bytes.len() - empty.len());
+        assert!(
+            bytes.len() - empty.len() <= 6,
+            "{} bytes",
+            bytes.len() - empty.len()
+        );
     }
 }

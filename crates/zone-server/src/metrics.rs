@@ -79,17 +79,51 @@ pub fn render_prometheus(all: &[ZoneMetrics]) -> String {
     };
     metric("zone_players", "Connected players", &|m| m.players as f64);
     metric("zone_entities", "Live entities", &|m| m.entities as f64);
-    metric("zone_tick_p50_ms", "World tick p50 over 10 s", &|m| m.tick_p50);
-    metric("zone_tick_p99_ms", "World tick p99 over 10 s", &|m| m.tick_p99);
-    metric("zone_tick_max_ms", "World tick max over 10 s", &|m| m.tick_max);
-    metric("zone_client_bytes_out_avg", "Mean bytes/s sent per client", &|m| m.bytes_out_avg);
-    metric("zone_client_bytes_out_max", "Max bytes/s sent to one client", &|m| m.bytes_out_max);
-    metric("zone_client_bytes_in_avg", "Mean bytes/s received per client", &|m| m.bytes_in_avg);
-    metric("zone_view_entities_avg", "Mean entities per snapshot", &|m| m.view_avg);
-    metric("zone_queue_gap_max_ms", "Worst spell-queue gap, 10 s", &|m| m.queue_gap_max_ms);
-    metric("zone_movement_corrections_total", "Rejected moves", &|m| m.movement_corrections as f64);
-    metric("zone_net_loop_p99_ms", "Network thread loop p99", &|m| m.net_loop_p99);
-    metric("zone_send_errors_total", "UDP packets the kernel refused", &|m| m.send_errors as f64);
+    metric("zone_tick_p50_ms", "World tick p50 over 10 s", &|m| {
+        m.tick_p50
+    });
+    metric("zone_tick_p99_ms", "World tick p99 over 10 s", &|m| {
+        m.tick_p99
+    });
+    metric("zone_tick_max_ms", "World tick max over 10 s", &|m| {
+        m.tick_max
+    });
+    metric(
+        "zone_client_bytes_out_avg",
+        "Mean bytes/s sent per client",
+        &|m| m.bytes_out_avg,
+    );
+    metric(
+        "zone_client_bytes_out_max",
+        "Max bytes/s sent to one client",
+        &|m| m.bytes_out_max,
+    );
+    metric(
+        "zone_client_bytes_in_avg",
+        "Mean bytes/s received per client",
+        &|m| m.bytes_in_avg,
+    );
+    metric(
+        "zone_view_entities_avg",
+        "Mean entities per snapshot",
+        &|m| m.view_avg,
+    );
+    metric(
+        "zone_queue_gap_max_ms",
+        "Worst spell-queue gap, 10 s",
+        &|m| m.queue_gap_max_ms,
+    );
+    metric("zone_movement_corrections_total", "Rejected moves", &|m| {
+        m.movement_corrections as f64
+    });
+    metric("zone_net_loop_p99_ms", "Network thread loop p99", &|m| {
+        m.net_loop_p99
+    });
+    metric(
+        "zone_send_errors_total",
+        "UDP packets the kernel refused",
+        &|m| m.send_errors as f64,
+    );
     s
 }
 
@@ -142,8 +176,13 @@ pub fn serve(port: u16, shared: Shared) {
             let mut buf = [0u8; 1024];
             let n = stream.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]);
-            let all: Vec<ZoneMetrics> =
-                shared.lock().unwrap().iter().filter(|m| !m.closed).cloned().collect();
+            let all: Vec<ZoneMetrics> = shared
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| !m.closed)
+                .cloned()
+                .collect();
             let (ctype, body) = if req.starts_with("GET /metrics.json") {
                 ("application/json", render_json(&all))
             } else {

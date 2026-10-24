@@ -157,11 +157,17 @@ impl Zone {
         let tick = self.tick;
         // One flat array of every entity's state, bucketed by cell.
         let mut ents: Vec<TickEnt> = Vec::with_capacity(self.entities.len());
-        let mut by_cell: Vec<Vec<u32>> = vec![Vec::new(); self.grid.cells.len()];
+        // Positions stored next to the index, so the candidate scan below
+        // walks small contiguous arrays instead of chasing entity states.
+        let mut by_cell: Vec<Vec<(f32, f32, u32)>> = vec![Vec::new(); self.grid.cells.len()];
         let mut index: HashMap<EntityId, u32> = HashMap::with_capacity(self.entities.len());
         // Attackers of each player: mobs with that player on their threat list.
         let mut attackers: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
-        for e in self.entities.values() {
+        // Built in id order, so sorting candidates by index sorts the view by
+        // id without moving the larger view entries around.
+        let mut order: Vec<&_> = self.entities.values().collect();
+        order.sort_unstable_by_key(|e| e.id);
+        for e in order {
             let i = ents.len() as u32;
             ents.push(TickEnt {
                 id: e.id,
@@ -169,7 +175,7 @@ impl Zone {
                 state: ent_state(e, now),
                 name: &e.name,
             });
-            by_cell[e.cell].push(i);
+            by_cell[e.cell].push((e.pos[0], e.pos[2], i));
             index.insert(e.id, i);
             if let Some(m) = &e.mob {
                 for (t, _) in &m.threat {
@@ -197,9 +203,8 @@ impl Zone {
                 // Candidates in the 3×3 cells, nearest first, capped.
                 let mut cand: Vec<(f32, u32)> = Vec::with_capacity(VIEW_CAP * 2);
                 for c in grid.neighbors(me.cell) {
-                    for &i in &by_cell[c] {
-                        let te = &ents[i as usize];
-                        let (dx, dz) = (te.pos[0] - me.pos[0], te.pos[2] - me.pos[2]);
+                    for &(x, z, i) in &by_cell[c] {
+                        let (dx, dz) = (x - me.pos[0], z - me.pos[2]);
                         cand.push((dx * dx + dz * dz, i));
                     }
                 }
@@ -216,8 +221,9 @@ impl Zone {
                         cand.push((dx * dx + dz * dz, i));
                     }
                 }
+                cand.sort_unstable_by_key(|c| c.1);
                 let phase = (net.client as u64).wrapping_mul(0x9E37) ^ tick;
-                let mut view: Vec<SnapEntity> = cand
+                let view: Vec<SnapEntity> = cand
                     .iter()
                     .map(|&(d2, i)| {
                         let te = &ents[i as usize];
@@ -234,7 +240,6 @@ impl Zone {
                         }
                     })
                     .collect();
-                view.sort_unstable_by_key(|e| e.id);
 
                 let baseline = net
                     .history
@@ -257,5 +262,61 @@ impl Zone {
             })
             .collect();
         self.outbox.extend(out);
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use std::sync::Arc;
+
+    /// `cargo test --release -p zone-server snapshot_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn snapshot_cost_1000_players() {
+        let pack = combat_core::ContentPack::load_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tenants/default"
+        ))
+        .unwrap();
+        let idx = pack.zone_index("elderwood").unwrap();
+        let mut z = Zone::new(Arc::new(pack), idx, 1, 0);
+        for c in 0..1000u64 {
+            let a = c as f32 * 2.399;
+            let r = 120.0 * ((c as f32 + 0.5) / 1000.0).sqrt();
+            z.add_player(
+                c + 1,
+                format!("P{c}"),
+                0,
+                1,
+                Some([a.cos() * r, 0.0, a.sin() * r]),
+                0,
+            );
+        }
+        let mut times = Vec::new();
+        for t in 0..200u64 {
+            // Everyone moves a little and acks the previous snapshot.
+            for e in z.entities.values_mut() {
+                if e.player.is_some() {
+                    e.pos[0] += 0.3 * ((t + e.id as u64) % 3) as f32 - 0.3;
+                    e.moving = true;
+                }
+            }
+            for n in z.nets.values_mut() {
+                n.acked = n.next_snap.saturating_sub(2);
+            }
+            z.outbox.clear();
+            let s = std::time::Instant::now();
+            z.tick += 1;
+            z.snapshot(t * 50);
+            times.push(s.elapsed().as_micros());
+        }
+        times.sort();
+        println!(
+            "snapshot for 1000 players: p50 {} us, p99 {} us, threads {}",
+            times[100],
+            times[197],
+            rayon::current_num_threads()
+        );
     }
 }

@@ -1,0 +1,24 @@
+swarm: 1000 bots -> 127.0.0.1:5600, 3 threads, roam 120 m around (0, 0), fight true, +0 ms / 0.0% loss
+all 1000 bots connecting took 10.0 s (planned 10.0 s); settling 12 s
+measuring for 60 s ...
+
+=== results: 1000 bots, 60 s measured ===
+connected at end        1000/1000
+server players          1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000
+server tick p50 / p99 / max (per 10 s window, ms)   9.86, 9.26, 9.29, 8.00, 7.95, 7.69, 7.69, 7.69 / 18.82, 17.86, 17.57, 15.10, 14.81, 15.08, 15.08, 15.08 / 25.67, 18.65, 23.71, 37.13, 15.68, 18.42, 18.42, 18.42
+server view entities    78.40, 78.10, 78.60, 78.40, 78.80, 78.70, 78.70, 78.70
+down per client         mean 8.73 KB/s, max 9.61 KB/s (UDP payload); 10.04 KB/s incl. IP/UDP headers
+up per client           mean 1.25 KB/s
+packets down per client 47.0/s
+entities in view        78.7 (client side, mean)
+mean rtt                40.1 ms
+combat                  720 casts confirmed, 91 kills, 0 deaths, 373392 damage
+spell-queue gap ms      median 0.92, p99 11.57, max 12.54 (58 queued casts)
+movement corrections    0
+progress                29573 xp gained, 358 items looted
+zone/layer handoffs     0
+snapshot baseline misses 0
+
+PASS tick p99 < 20 ms (worst window 18.82 ms)
+PASS down < 10 KB/s per client (mean 8.73 KB/s)
+PASS all bots stayed connected

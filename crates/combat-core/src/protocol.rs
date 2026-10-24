@@ -24,11 +24,22 @@ pub enum ClientMsg {
     Release,
     // --- Channel BULK: inventory, chat, party ---
     /// Use (consumable) or equip (gear) the item in a bag slot.
-    UseItem { slot: u16 },
-    Unequip { equip_slot: u8 },
-    Destroy { slot: u16 },
-    Chat { channel: ChatChannel, text: String },
-    PartyInvite { name: String },
+    UseItem {
+        slot: u16,
+    },
+    Unequip {
+        equip_slot: u8,
+    },
+    Destroy {
+        slot: u16,
+    },
+    Chat {
+        channel: ChatChannel,
+        text: String,
+    },
+    PartyInvite {
+        name: String,
+    },
     PartyAccept,
     PartyLeave,
 }

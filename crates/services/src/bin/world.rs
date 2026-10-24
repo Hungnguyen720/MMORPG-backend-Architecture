@@ -81,7 +81,9 @@ async fn main() {
         }
     }
     let pack = ContentPack::load(&env.content).unwrap_or_else(|e| panic!("{}: {e}", env.content));
-    let redis = services::redis_conn(&env.redis).await.unwrap_or_else(|e| panic!("{e}"));
+    let redis = services::redis_conn(&env.redis)
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
     let app = App {
         tenant: pack.tenant.id.clone(),
         soft_cap: cap_override.unwrap_or(pack.tenant.layer_soft_cap),
@@ -103,7 +105,9 @@ async fn main() {
         .route("/place", post(place))
         .route("/status", get(status))
         .with_state(app);
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+        .await
+        .unwrap();
     axum::serve(listener, router).await.unwrap();
 }
 
@@ -192,7 +196,10 @@ async fn place(
         return Err(err(StatusCode::UNAUTHORIZED, "bad internal key"));
     }
     if !app.zones.contains(&req.zone) {
-        return Err(err(StatusCode::BAD_REQUEST, format!("unknown zone {}", req.zone)));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            format!("unknown zone {}", req.zone),
+        ));
     }
     let mut con = app.redis.clone();
     let layer = choose_layer(&app, &mut con, &req).await?;
@@ -208,10 +215,12 @@ async fn place(
         .ignore()
         .query_async(&mut con)
         .await;
-    let addr = layer
-        .addr
-        .parse()
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, format!("layer address: {e}")))?;
+    let addr = layer.addr.parse().map_err(|e| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("layer address: {e}"),
+        )
+    })?;
     let token = mint_token(
         &app.env.netcode_key,
         addr,
@@ -342,7 +351,11 @@ async fn spawn(
             .await
             .unwrap_or(None);
         let Some(url) = url else {
-            let _: Result<i32, _> = redis::cmd("SREM").arg(keys::procs(t)).arg(&p).query_async(con).await;
+            let _: Result<i32, _> = redis::cmd("SREM")
+                .arg(keys::procs(t))
+                .arg(&p)
+                .query_async(con)
+                .await;
             continue;
         };
         let hosted = existing.iter().filter(|l| l.proc == p).count();

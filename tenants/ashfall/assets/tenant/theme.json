@@ -1,0 +1,11 @@
+{
+  "accent": "#ff6a2b",
+  "hp": "#b3261e",
+  "mana": "#7a3cff",
+  "xp": "#ff9a3d",
+  "wall": "#3a2f2c",
+  "portal": "#ff5a1f99",
+  "sky": "#1a0f0d",
+  "ambient": "#b07a60",
+  "fog": "#2a1510"
+}

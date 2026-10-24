@@ -1,0 +1,84 @@
+[gd_scene load_steps=13 format=3]
+
+[sub_resource type="BoxMesh" id="BoxMesh_0"]
+size = Vector3(0.3, 1.8, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+albedo_color = Color(0.150, 0.100, 0.080, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_2"]
+size = Vector3(1.6, 0.2, 0.2)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3"]
+albedo_color = Color(0.150, 0.100, 0.080, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_4"]
+radius = 0.3
+height = 0.6
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5"]
+albedo_color = Color(0.100, 0.070, 0.050, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_6"]
+radius = 0.08
+height = 0.16
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_7"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(1.000, 0.450, 0.100, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_8"]
+radius = 0.08
+height = 0.16
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_9"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(1.000, 0.450, 0.100, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="SphereMesh" id="SphereMesh_10"]
+radius = 0.08
+height = 0.16
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_11"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(1.000, 0.450, 0.100, 1)
+emission_energy_multiplier = 2.0
+
+[node name="Effigy" type="Node3D"]
+
+[node name="Part0" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.9000, 0.0000)
+mesh = SubResource("BoxMesh_0")
+surface_material_override/0 = SubResource("StandardMaterial3D_1")
+metadata/tint = true
+
+[node name="Part1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.4000, 0.0000)
+mesh = SubResource("BoxMesh_2")
+surface_material_override/0 = SubResource("StandardMaterial3D_3")
+metadata/tint = true
+
+[node name="Part2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 2.0500, 0.0000)
+mesh = SubResource("SphereMesh_4")
+surface_material_override/0 = SubResource("StandardMaterial3D_5")
+
+[node name="Part3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, -0.6000, 1.5500, 0.1000)
+mesh = SubResource("SphereMesh_6")
+surface_material_override/0 = SubResource("StandardMaterial3D_7")
+
+[node name="Part4" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.5500, 0.1000)
+mesh = SubResource("SphereMesh_8")
+surface_material_override/0 = SubResource("StandardMaterial3D_9")
+
+[node name="Part5" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.6000, 1.5500, 0.1000)
+mesh = SubResource("SphereMesh_10")
+surface_material_override/0 = SubResource("StandardMaterial3D_11")

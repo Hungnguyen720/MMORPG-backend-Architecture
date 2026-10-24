@@ -29,7 +29,10 @@ impl Env {
     pub fn from_args(args: &mut Vec<String>) -> Self {
         let mut take = |flag: &str, env: &str, default: &str| -> String {
             if let Some(i) = args.iter().position(|a| a == flag) {
-                let v = args.get(i + 1).cloned().unwrap_or_else(|| panic!("{flag} needs a value"));
+                let v = args
+                    .get(i + 1)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("{flag} needs a value"));
                 args.drain(i..=i + 1);
                 return v;
             }
@@ -221,12 +224,25 @@ pub enum BusMsg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum CharEvent {
-    PartyInvite { from_name: String, party: String },
+    PartyInvite {
+        from_name: String,
+        party: String,
+    },
     /// The character's party now looks like this (None: no party).
-    PartyChanged { party: Option<Party> },
-    PartyChat { from: String, text: String },
-    Whisper { from: String, text: String },
-    System { text: String },
+    PartyChanged {
+        party: Option<Party>,
+    },
+    PartyChat {
+        from: String,
+        text: String,
+    },
+    Whisper {
+        from: String,
+        text: String,
+    },
+    System {
+        text: String,
+    },
 }
 
 /// Party record in Redis.

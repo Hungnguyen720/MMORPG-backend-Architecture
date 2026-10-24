@@ -1,0 +1,27 @@
+t+0s  elderwood#1=0  hollow_crypt#1=0
+t+6s  elderwood#1=50  elderwood#2=0  elderwood#3=0  hollow_crypt#1=0
+t+11s  elderwood#1=50  elderwood#2=50  elderwood#3=30  hollow_crypt#1=0
+t+16s  elderwood#1=50  elderwood#2=50  elderwood#3=30  hollow_crypt#1=0
+t+21s  elderwood#1=50  elderwood#2=50  elderwood#3=30  hollow_crypt#1=0
+t+26s  elderwood#1=50  elderwood#2=50  elderwood#3=30  hollow_crypt#1=0
+t+31s  elderwood#1=50  elderwood#2=50  elderwood#3=30  hollow_crypt#1=0
+t+36s  elderwood#1=50  elderwood#2=50  elderwood#3=30  hollow_crypt#1=0
+t+41s  elderwood#1=25  elderwood#2=50  elderwood#3=0  hollow_crypt#1=0
+t+46s  elderwood#1=25  elderwood#2=5  elderwood#3=0  hollow_crypt#1=0
+t+51s  elderwood#1=25  elderwood#2=5  elderwood#3=0 (draining)  hollow_crypt#1=0
+t+56s  elderwood#1=25  elderwood#2=5  hollow_crypt#1=0
+t+61s  elderwood#1=25  elderwood#2=5 (draining)  hollow_crypt#1=0
+t+66s  elderwood#1=30  hollow_crypt#1=0
+t+71s  elderwood#1=30  hollow_crypt#1=0
+t+76s  elderwood#1=30  hollow_crypt#1=0
+t+81s  elderwood#1=30  hollow_crypt#1=0
+t+86s  elderwood#1=30  hollow_crypt#1=0
+t+91s  elderwood#1=30  hollow_crypt#1=0
+t+96s  elderwood#1=30  hollow_crypt#1=0
+t+101s  elderwood#1=30  hollow_crypt#1=0
+t+106s  elderwood#1=30  hollow_crypt#1=0
+t+111s  elderwood#1=30  hollow_crypt#1=0
+t+116s  elderwood#1=30  hollow_crypt#1=0
+t+121s  elderwood#1=30  hollow_crypt#1=0
+t+126s  elderwood#1=30  hollow_crypt#1=0
+final: elderwood#1=0  hollow_crypt#1=0

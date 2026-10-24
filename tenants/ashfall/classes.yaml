@@ -1,0 +1,16 @@
+classes:
+  # A melee-range hexer: shorter range, heavier hits, a self-heal.
+  - id: grave_warden
+    name: Grave Warden
+    max_hp: 6200
+    max_mana: 800
+    mana_regen_per_sec: 16
+    hp_regen_per_sec_ooc: 150
+    spell_power: 360
+    crit_chance: 0.12
+    move_speed: 6.8
+    hp_per_level: 520
+    mana_per_level: 30
+    spell_power_per_level: 28
+    abilities: [soul_rend, hex_bolt, siphon_life, wither, ember_burst, grave_ward]
+    model: warden

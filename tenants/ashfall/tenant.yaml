@@ -1,0 +1,22 @@
+# Ashfall: the dark fantasy reskin. Same engine build as Elderwood Online;
+# everything that makes it a different game is in this directory (data) and
+# in assets/ (models, icons, theme), packed into one asset pack.
+tenant:
+  id: ashfall
+  name: "Ashfall: Embers of the Pale King"
+  xp_rate: 1.0
+  xp_per_level: [500, 1100, 1800, 2700, 3800, 5200, 7000]
+  start_zone: cinderreach
+  layer_soft_cap: 150
+  bag_slots: 16
+  starting_items:
+    - { item: ember_tonic, count: 4 }
+  theme:
+    accent: "#ff6a2b"
+    panel: "#120c0ccc"
+    hp: "#b3261e"
+    mana: "#7a3cff"
+    xp: "#ff9a3d"
+    text: "#f2e6dc"
+    wall: "#3a2f2c"
+    portal: "#ff5a1f99"

@@ -152,7 +152,8 @@ impl LoginClient {
         if m.assets_hash.is_empty() {
             return Ok(None);
         }
-        let path = std::path::Path::new(cache_dir).join(format!("{}-{}.zip", m.tenant, m.assets_hash));
+        let path =
+            std::path::Path::new(cache_dir).join(format!("{}-{}.zip", m.tenant, m.assets_hash));
         if path.exists() {
             return Ok(Some(path.to_string_lossy().into_owned()));
         }

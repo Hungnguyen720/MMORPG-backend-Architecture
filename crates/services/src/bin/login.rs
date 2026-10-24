@@ -9,8 +9,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -82,8 +82,12 @@ async fn main() {
         (Bytes::from(b), h)
     });
     let db = Db::connect(&env.db, 8).expect("postgres");
-    db.migrate().await.unwrap_or_else(|e| panic!("postgres {}: {e}", env.db));
-    let redis = services::redis_conn(&env.redis).await.unwrap_or_else(|e| panic!("{e}"));
+    db.migrate()
+        .await
+        .unwrap_or_else(|e| panic!("postgres {}: {e}", env.db));
+    let redis = services::redis_conn(&env.redis)
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
     println!(
         "login service for \"{}\" on :{port} (pack {:016x}, {} bytes)",
         pack.tenant.name,
@@ -111,10 +115,15 @@ async fn main() {
         .route("/content/pack", get(content_pack))
         .route("/content/assets", get(content_assets))
         .with_state(app);
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await.unwrap();
-    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .unwrap();
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 /// Login and register attempts per client address per minute
@@ -148,15 +157,28 @@ async fn register(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(c): Json<Credentials>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    if rate_limited(&app, "register", &addr.ip().to_string(), attempts_per_minute()).await {
-        return Err(err(StatusCode::TOO_MANY_REQUESTS, "too many attempts, wait a minute"));
+    if rate_limited(
+        &app,
+        "register",
+        &addr.ip().to_string(),
+        attempts_per_minute(),
+    )
+    .await
+    {
+        return Err(err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many attempts, wait a minute",
+        ));
     }
     let email = c.email.trim().to_lowercase();
     if !email.contains('@') || email.len() > 200 {
         return Err(err(StatusCode::BAD_REQUEST, "enter a valid email"));
     }
     if c.password.len() < 8 {
-        return Err(err(StatusCode::BAD_REQUEST, "password needs at least 8 characters"));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "password needs at least 8 characters",
+        ));
     }
     let password = c.password.clone();
     let hash = tokio::task::spawn_blocking(move || {
@@ -168,9 +190,17 @@ async fn register(
     .await
     .map_err(internal)?
     .map_err(internal)?;
-    match app.db.create_account(&email, &hash).await.map_err(internal)? {
+    match app
+        .db
+        .create_account(&email, &hash)
+        .await
+        .map_err(internal)?
+    {
         Some(_) => Ok(StatusCode::CREATED),
-        None => Err(err(StatusCode::CONFLICT, "that email already has an account")),
+        None => Err(err(
+            StatusCode::CONFLICT,
+            "that email already has an account",
+        )),
     }
 }
 
@@ -180,7 +210,10 @@ async fn login(
     Json(c): Json<Credentials>,
 ) -> ApiResult<SessionResponse> {
     if rate_limited(&app, "login", &addr.ip().to_string(), attempts_per_minute()).await {
-        return Err(err(StatusCode::TOO_MANY_REQUESTS, "too many attempts, wait a minute"));
+        return Err(err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many attempts, wait a minute",
+        ));
     }
     let bad = || err(StatusCode::UNAUTHORIZED, "wrong email or password");
     let Some((account, hash)) = app.db.account_by_email(&c.email).await.map_err(internal)? else {
@@ -189,7 +222,11 @@ async fn login(
     let password = c.password.clone();
     let ok = tokio::task::spawn_blocking(move || {
         PasswordHash::new(&hash)
-            .map(|h| Argon2::default().verify_password(password.as_bytes(), &h).is_ok())
+            .map(|h| {
+                Argon2::default()
+                    .verify_password(password.as_bytes(), &h)
+                    .is_ok()
+            })
             .unwrap_or(false)
     })
     .await
@@ -314,7 +351,11 @@ async fn create_character(
     }))
 }
 
-async fn play(State(app): State<App>, h: HeaderMap, Path(id): Path<i64>) -> ApiResult<PlaceResponse> {
+async fn play(
+    State(app): State<App>,
+    h: HeaderMap,
+    Path(id): Path<i64>,
+) -> ApiResult<PlaceResponse> {
     let acc = account(&app, &h).await?;
     let rec = app
         .db
@@ -347,7 +388,12 @@ async fn play(State(app): State<App>, h: HeaderMap, Path(id): Path<i64>) -> ApiR
         })
         .send()
         .await
-        .map_err(|e| err(StatusCode::SERVICE_UNAVAILABLE, format!("world service: {e}")))?;
+        .map_err(|e| {
+            err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("world service: {e}"),
+            )
+        })?;
     if !resp.status().is_success() {
         let body: ApiError = resp.json().await.unwrap_or(ApiError {
             error: "world service error".into(),

@@ -486,7 +486,10 @@ impl ClientSession {
         let (distance, los) = if def.target == TargetKind::Caster {
             (Some(0.0), true)
         } else {
-            match target.filter(|t| self.is_hostile(*t)).and_then(|t| self.entity_pos(t)) {
+            match target
+                .filter(|t| self.is_hostile(*t))
+                .and_then(|t| self.entity_pos(t))
+            {
                 Some(tp) => (Some(dist_xz(self.pos, tp)), self.geo.los(self.pos, tp)),
                 None => (None, true),
             }

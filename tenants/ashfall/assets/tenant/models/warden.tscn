@@ -1,0 +1,99 @@
+[gd_scene load_steps=17 format=3]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_0"]
+radius = 0.42
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+albedo_color = Color(0.180, 0.160, 0.170, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_2"]
+size = Vector3(1.0, 0.25, 0.55)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3"]
+albedo_color = Color(0.320, 0.310, 0.330, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_4"]
+radius = 0.28
+height = 0.5
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5"]
+albedo_color = Color(0.120, 0.100, 0.100, 1)
+
+[sub_resource type="PrismMesh" id="PrismMesh_6"]
+size = Vector3(0.5, 0.45, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_7"]
+albedo_color = Color(0.120, 0.100, 0.100, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_8"]
+size = Vector3(0.08, 0.08, 0.08)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_9"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(1.000, 0.450, 0.100, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_10"]
+size = Vector3(0.08, 0.08, 0.08)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_11"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(1.000, 0.450, 0.100, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_12"]
+size = Vector3(0.08, 1.6, 0.08)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_13"]
+albedo_color = Color(0.850, 0.820, 0.740, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_14"]
+size = Vector3(0.7, 0.1, 0.06)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_15"]
+albedo_color = Color(0.320, 0.310, 0.330, 1)
+
+[node name="Warden" type="Node3D"]
+
+[node name="Part0" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.9000, 0.0000)
+mesh = SubResource("CapsuleMesh_0")
+surface_material_override/0 = SubResource("StandardMaterial3D_1")
+
+[node name="Part1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.5000, 0.0000)
+mesh = SubResource("BoxMesh_2")
+surface_material_override/0 = SubResource("StandardMaterial3D_3")
+
+[node name="Part2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.9500, 0.0000)
+mesh = SubResource("SphereMesh_4")
+surface_material_override/0 = SubResource("StandardMaterial3D_5")
+
+[node name="Part3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 2.3000, 0.0000)
+mesh = SubResource("PrismMesh_6")
+surface_material_override/0 = SubResource("StandardMaterial3D_7")
+
+[node name="Part4" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, -0.0900, 1.9800, 0.2400)
+mesh = SubResource("BoxMesh_8")
+surface_material_override/0 = SubResource("StandardMaterial3D_9")
+
+[node name="Part5" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0900, 1.9800, 0.2400)
+mesh = SubResource("BoxMesh_10")
+surface_material_override/0 = SubResource("StandardMaterial3D_11")
+
+[node name="Part6" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.5500, 1.0000, 0.2000)
+mesh = SubResource("BoxMesh_12")
+surface_material_override/0 = SubResource("StandardMaterial3D_13")
+
+[node name="Part7" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.9397, -0.3420, -0.0000, 0.3420, 0.9397, 0.0000, 0.0000, -0.0000, 1.0000, 0.2500, 1.8000, 0.2000)
+mesh = SubResource("BoxMesh_14")
+surface_material_override/0 = SubResource("StandardMaterial3D_15")

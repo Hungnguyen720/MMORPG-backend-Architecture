@@ -128,7 +128,9 @@ impl Brain {
         self.maybe_potion(s, now);
 
         if self.fight {
-            if s.target.is_none_or(|t| !s.is_hostile(t) || s.entities[&t].has_flag(flags::PASSIVE)) {
+            if s.target
+                .is_none_or(|t| !s.is_hostile(t) || s.entities[&t].has_flag(flags::PASSIVE))
+            {
                 s.target = s.next_target(35.0, false);
             }
             if let Some(t) = s.target
@@ -148,11 +150,11 @@ impl Brain {
         if self.goal.is_none() && now >= self.next_goal {
             let a = self.rand() * std::f32::consts::TAU;
             let r = self.roam * self.rand().sqrt();
-            self.goal = Some(s.geo.clamp([
-                self.home[0] + a.cos() * r,
-                0.0,
-                self.home[2] + a.sin() * r,
-            ]));
+            self.goal =
+                Some(
+                    s.geo
+                        .clamp([self.home[0] + a.cos() * r, 0.0, self.home[2] + a.sin() * r]),
+                );
         }
         match self.goal {
             Some(g) if dist_xz(s.pos, g) > 1.0 => {

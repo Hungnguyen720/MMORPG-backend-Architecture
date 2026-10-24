@@ -108,8 +108,14 @@ impl ZoneGeometry {
 
 /// Slab test of segment a→b (on the ground plane) against a box grown by `r`.
 fn segment_hits_box(a: [f32; 3], b: [f32; 3], w: &Blocker, r: f32) -> bool {
-    let min = [w.center[0] - w.size[0] / 2.0 - r, w.center[1] - w.size[1] / 2.0 - r];
-    let max = [w.center[0] + w.size[0] / 2.0 + r, w.center[1] + w.size[1] / 2.0 + r];
+    let min = [
+        w.center[0] - w.size[0] / 2.0 - r,
+        w.center[1] - w.size[1] / 2.0 - r,
+    ];
+    let max = [
+        w.center[0] + w.size[0] / 2.0 + r,
+        w.center[1] + w.size[1] / 2.0 + r,
+    ];
     let o = [a[0], a[2]];
     let d = [b[0] - a[0], b[2] - a[2]];
     let (mut t0, mut t1) = (0.0f32, 1.0f32);
@@ -230,9 +236,18 @@ mod tests {
         let g = walled();
         let mut v = MoveValidator::default();
         v.reset(0, [-5.0, 0.0, 0.0]);
-        assert_eq!(v.check(&g, 100, [5.0, 0.0, 0.0], 7.0), MoveVerdict::ThroughWall);
-        assert_eq!(v.check(&g, 100, [-5.0, 0.0, 30.0], 7.0), MoveVerdict::TooFast);
+        assert_eq!(
+            v.check(&g, 100, [5.0, 0.0, 0.0], 7.0),
+            MoveVerdict::ThroughWall
+        );
+        assert_eq!(
+            v.check(&g, 100, [-5.0, 0.0, 30.0], 7.0),
+            MoveVerdict::TooFast
+        );
         assert_eq!(v.check(&g, 100, [-5.0, 0.0, 0.6], 7.0), MoveVerdict::Ok);
-        assert_eq!(v.check(&g, 100, [-60.0, 0.0, 0.6], 7.0), MoveVerdict::OutOfBounds);
+        assert_eq!(
+            v.check(&g, 100, [-60.0, 0.0, 0.6], 7.0),
+            MoveVerdict::OutOfBounds
+        );
     }
 }

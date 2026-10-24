@@ -1,0 +1,127 @@
+[gd_scene load_steps=21 format=3]
+
+[sub_resource type="BoxMesh" id="BoxMesh_0"]
+size = Vector3(0.6, 0.55, 1.7)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+albedo_color = Color(0.250, 0.220, 0.210, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_2"]
+size = Vector3(0.45, 0.42, 0.6)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3"]
+albedo_color = Color(0.250, 0.220, 0.210, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_4"]
+size = Vector3(0.3, 0.1, 0.3)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(1.000, 0.450, 0.100, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="BoxMesh" id="BoxMesh_6"]
+size = Vector3(0.16, 0.55, 0.16)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_7"]
+albedo_color = Color(0.120, 0.080, 0.060, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_8"]
+size = Vector3(0.16, 0.55, 0.16)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_9"]
+albedo_color = Color(0.120, 0.080, 0.060, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_10"]
+size = Vector3(0.16, 0.55, 0.16)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_11"]
+albedo_color = Color(0.120, 0.080, 0.060, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_12"]
+size = Vector3(0.16, 0.55, 0.16)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_13"]
+albedo_color = Color(0.120, 0.080, 0.060, 1)
+
+[sub_resource type="PrismMesh" id="PrismMesh_14"]
+size = Vector3(0.15, 0.35, 0.15)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_15"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(0.800, 0.250, 0.050, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="PrismMesh" id="PrismMesh_16"]
+size = Vector3(0.15, 0.35, 0.15)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_17"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(0.800, 0.250, 0.050, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="PrismMesh" id="PrismMesh_18"]
+size = Vector3(0.15, 0.35, 0.15)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_19"]
+albedo_color = Color(1.000, 0.450, 0.100, 1)
+emission_enabled = true
+emission = Color(0.800, 0.250, 0.050, 1)
+emission_energy_multiplier = 2.0
+
+[node name="Hound" type="Node3D"]
+
+[node name="Part0" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.8000, 0.0000)
+mesh = SubResource("BoxMesh_0")
+surface_material_override/0 = SubResource("StandardMaterial3D_1")
+metadata/tint = true
+
+[node name="Part1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.0000, 1.0500)
+mesh = SubResource("BoxMesh_2")
+surface_material_override/0 = SubResource("StandardMaterial3D_3")
+metadata/tint = true
+
+[node name="Part2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.8500, 1.4000)
+mesh = SubResource("BoxMesh_4")
+surface_material_override/0 = SubResource("StandardMaterial3D_5")
+
+[node name="Part3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, -0.2200, 0.2700, -0.6000)
+mesh = SubResource("BoxMesh_6")
+surface_material_override/0 = SubResource("StandardMaterial3D_7")
+
+[node name="Part4" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, -0.2200, 0.2700, 0.6000)
+mesh = SubResource("BoxMesh_8")
+surface_material_override/0 = SubResource("StandardMaterial3D_9")
+
+[node name="Part5" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.2200, 0.2700, -0.6000)
+mesh = SubResource("BoxMesh_10")
+surface_material_override/0 = SubResource("StandardMaterial3D_11")
+
+[node name="Part6" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.2200, 0.2700, 0.6000)
+mesh = SubResource("BoxMesh_12")
+surface_material_override/0 = SubResource("StandardMaterial3D_13")
+
+[node name="Part7" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.2200, -0.4000)
+mesh = SubResource("PrismMesh_14")
+surface_material_override/0 = SubResource("StandardMaterial3D_15")
+
+[node name="Part8" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.2200, 0.0000)
+mesh = SubResource("PrismMesh_16")
+surface_material_override/0 = SubResource("StandardMaterial3D_17")
+
+[node name="Part9" type="MeshInstance3D" parent="."]
+transform = Transform3D(1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 0.0000, -0.0000, 1.0000, 0.0000, 1.2200, 0.4000)
+mesh = SubResource("PrismMesh_18")
+surface_material_override/0 = SubResource("StandardMaterial3D_19")

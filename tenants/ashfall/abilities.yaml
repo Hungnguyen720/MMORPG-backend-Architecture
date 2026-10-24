@@ -1,0 +1,110 @@
+abilities:
+  - id: soul_rend
+    name: Soul Rend
+    cast_ms: 1800
+    gcd_ms: 1500
+    mana_cost: 18
+    range: 20
+    color: "#ff6a2b"
+    icon: soul_rend
+    vfx: ember_slash
+    effects:
+      - damage: { school: shadow, base: 1000, coeff_spellpower: 1.1 }
+
+  - id: hex_bolt
+    name: Hex Bolt
+    gcd_ms: 1500
+    mana_cost: 10
+    range: 25
+    color: "#9c4dff"
+    icon: hex_bolt
+    vfx: hex_bolt
+    effects:
+      - damage: { school: shadow, base: 420, coeff_spellpower: 0.45 }
+
+  - id: siphon_life
+    name: Siphon Life
+    channel_ms: 2500
+    channel_ticks: 5
+    gcd_ms: 1500
+    mana_cost: 28
+    range: 20
+    color: "#d23b5c"
+    icon: siphon
+    vfx: blood_beam
+    effects:
+      - damage: { school: shadow, base: 220, coeff_spellpower: 0.25 }
+      - heal: { base: 60, coeff_spellpower: 0.05 }
+
+  - id: wither
+    name: Wither
+    gcd_ms: 1500
+    mana_cost: 14
+    range: 25
+    color: "#8a9a3a"
+    icon: wither
+    vfx: rot
+    effects:
+      - apply_aura: { aura: wither }
+
+  - id: ember_burst
+    name: Ember Burst
+    gcd_ms: 0
+    cooldown_ms: 12000
+    range: 15
+    cast_while_moving: true
+    color: "#ffb02e"
+    icon: ember_burst
+    vfx: ember_burst
+    effects:
+      - damage: { school: fire, base: 700, coeff_spellpower: 0.7 }
+
+  - id: grave_ward
+    name: Grave Ward
+    target: caster
+    gcd_ms: 1500
+    cooldown_ms: 30000
+    mana_cost: 40
+    range: 0
+    color: "#c9c3b6"
+    icon: grave_ward
+    vfx: bone_shield
+    effects:
+      - heal: { base: 1400, coeff_spellpower: 0.6 }
+
+  # ---- Mob abilities ----
+  - id: pale_flame
+    name: Pale Flame
+    cast_ms: 2200
+    gcd_ms: 1500
+    cooldown_ms: 7000
+    range: 28
+    color: "#d8e6ff"
+    vfx: pale_flame
+    effects:
+      - damage: { school: fire, base: 420, coeff_spellpower: 1.0 }
+
+  - id: cinder_maw
+    name: Cinder Maw
+    gcd_ms: 1500
+    cooldown_ms: 10000
+    range: 3
+    requires_los: false
+    color: "#ff4d1a"
+    vfx: bite_fire
+    effects:
+      - apply_aura: { aura: smoldering }
+
+auras:
+  - id: wither
+    name: Wither
+    duration_ms: 15000
+    tick_ms: 3000
+    tick_base: 260
+    tick_coeff_spellpower: 0.3
+
+  - id: smoldering
+    name: Smoldering
+    duration_ms: 6000
+    tick_ms: 1500
+    tick_base: 80

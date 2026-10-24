@@ -9,6 +9,7 @@
 //!   --bots N                default 200
 //!   --seconds S             measured run length after ramp-up, default 60
 //!   --ramp-per-sec N        connections per second, default 100
+//!   --settle S              seconds to wait after the ramp before measuring, default 3
 //!   --threads T             bot threads, default 3
 //!   --center X,Z            where bots roam, default the zone spawn
 //!   --roam R                roam radius in metres, default 120
@@ -19,6 +20,9 @@
 //!   --max-down-kbps KB      pass threshold per client, default 10
 //!   --content DIR|PACK      default tenants/default
 //!   --json PATH             also write the results as JSON
+//!   --login URL             go through the login service instead of dev auth:
+//!                           each bot registers, creates a character and plays
+//!                           (needs MMO_LOGIN_RATE raised on the login server)
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -35,6 +39,7 @@ struct Opts {
     bots: usize,
     seconds: u64,
     ramp: usize,
+    settle: u64,
     threads: usize,
     center: Option<[f32; 2]>,
     roam: f32,
@@ -46,6 +51,7 @@ struct Opts {
     max_down_kbps: f64,
     content: String,
     json: Option<String>,
+    login: Option<String>,
 }
 
 #[derive(Default)]
@@ -66,6 +72,7 @@ fn parse() -> Opts {
         bots: 200,
         seconds: 60,
         ramp: 100,
+        settle: 3,
         threads: 3,
         center: None,
         roam: 120.0,
@@ -77,6 +84,7 @@ fn parse() -> Opts {
         max_down_kbps: 10.0,
         content: "tenants/default".into(),
         json: None,
+        login: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -86,6 +94,7 @@ fn parse() -> Opts {
             "--bots" => o.bots = v().parse().unwrap(),
             "--seconds" => o.seconds = v().parse().unwrap(),
             "--ramp-per-sec" => o.ramp = v().parse().unwrap(),
+            "--settle" => o.settle = v().parse().unwrap(),
             "--threads" => o.threads = v().parse().unwrap(),
             "--center" => {
                 let s = v();
@@ -101,6 +110,7 @@ fn parse() -> Opts {
             "--max-down-kbps" => o.max_down_kbps = v().parse().unwrap(),
             "--content" => o.content = v(),
             "--json" => o.json = Some(v()),
+            "--login" => o.login = Some(v()),
             other => panic!("unknown argument {other}"),
         }
     }
@@ -116,7 +126,15 @@ fn main() {
         .unwrap_or([zone.player_spawn[0], zone.player_spawn[2]]);
     println!(
         "swarm: {} bots -> {}, {} threads, roam {:.0} m around ({:.0}, {:.0}), fight {}, +{} ms / {:.1}% loss",
-        o.bots, o.server, o.threads, o.roam, center[0], center[1], o.fight, o.latency, o.loss * 100.0
+        o.bots,
+        o.server,
+        o.threads,
+        o.roam,
+        center[0],
+        center[1],
+        o.fight,
+        o.latency,
+        o.loss * 100.0
     );
 
     let threads = o.threads.max(1).min(o.bots.max(1));
@@ -132,6 +150,9 @@ fn main() {
         let mine: Vec<usize> = (0..o.bots).filter(|i| i % threads == t).collect();
         let (server, latency, loss, fight, roam, ramp) =
             (o.server, o.latency, o.loss, o.fight, o.roam, o.ramp.max(1));
+        let login = o.login.clone();
+        let run = run_tag();
+        let settle_s = o.settle;
         std::thread::spawn(move || {
             let mut bots: Vec<(ClientSession, Brain, Option<(u64, u64, u64)>)> = Vec::new();
             let mut pending = mine.into_iter().peekable();
@@ -144,12 +165,23 @@ fn main() {
                         break;
                     }
                     pending.next();
-                    let mut s = ClientSession::connect(
-                        pack.clone(),
-                        server,
-                        Auth::Dev { name: format!("Bot{i}") },
-                    )
-                    .expect("socket");
+                    let mut s = match &login {
+                        Some(url) => match login_bot(url, &run, i, &pack) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                eprintln!("bot {i}: {e}");
+                                continue;
+                            }
+                        },
+                        None => ClientSession::connect(
+                            pack.clone(),
+                            server,
+                            Auth::Dev {
+                                name: format!("Bot{i}"),
+                            },
+                        )
+                        .expect("socket"),
+                    };
                     s.set_fake_lag(latency, loss);
                     let mut b = Brain::new(
                         [center[0], 0.0, center[1]],
@@ -165,10 +197,10 @@ fn main() {
                 }
                 if pending.peek().is_none() && measuring_from.is_none() {
                     // Everyone connected: wait for the other threads, then
-                    // give connections 3 s to settle and start measuring.
+                    // give connections time to settle and start measuring.
                     barrier.wait();
                     let settle = Instant::now();
-                    while settle.elapsed() < Duration::from_secs(3) {
+                    while settle.elapsed() < Duration::from_secs(settle_s) {
                         for (s, b, _) in bots.iter_mut() {
                             s.update();
                             b.tick(s);
@@ -218,10 +250,11 @@ fn main() {
     drop(tx);
     barrier.wait();
     println!(
-        "all {} bots connecting took {:.1} s (planned {:.1} s); settling 3 s",
+        "all {} bots connecting took {:.1} s (planned {:.1} s); settling {} s",
         o.bots,
         started.elapsed().as_secs_f64(),
-        total_ramp.as_secs_f64()
+        total_ramp.as_secs_f64(),
+        o.settle
     );
     barrier.wait();
     println!("measuring for {} s ...", o.seconds);
@@ -229,7 +262,10 @@ fn main() {
     let mut server_samples = Vec::new();
     let t0 = Instant::now();
     while t0.elapsed() < measure + Duration::from_millis(500) {
-        std::thread::sleep(Duration::from_secs(10).min(measure.saturating_sub(t0.elapsed()) + Duration::from_millis(400)));
+        std::thread::sleep(
+            Duration::from_secs(10)
+                .min(measure.saturating_sub(t0.elapsed()) + Duration::from_millis(400)),
+        );
         if t0.elapsed() >= Duration::from_secs(9)
             && let Some(m) = fetch_metrics(&o.metrics)
         {
@@ -238,6 +274,39 @@ fn main() {
     }
     let mut reports: Vec<BotReport> = rx.iter().flatten().collect();
     report(&o, &mut reports, &server_samples);
+}
+
+/// Letters only (character names allow nothing else).
+fn letters(mut n: usize) -> String {
+    let mut s = String::new();
+    loop {
+        s.insert(0, (b'a' + (n % 26) as u8) as char);
+        n /= 26;
+        if n == 0 {
+            return s;
+        }
+    }
+}
+
+fn run_tag() -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize;
+    letters((t ^ (std::process::id() as usize * 7919)) % (26 * 26 * 26 * 26))
+}
+
+/// Register, create a character and enter the world like a real player.
+fn login_bot(url: &str, run: &str, i: usize, pack: &ContentPack) -> Result<ClientSession, String> {
+    let mut lc = net_client::login::LoginClient::new(url);
+    let email = format!("bot-{run}-{i}@load.test");
+    let pw = "load test password";
+    lc.register(&email, pw)?;
+    lc.login(&email, pw)?;
+    let list = lc.characters()?;
+    let c = lc.create_character(&format!("Lb{run}{}", letters(i)), &list.classes[0].id)?;
+    let t = lc.play(c.id)?;
+    ClientSession::connect(pack.clone(), t.addr, Auth::Token(t.token))
 }
 
 fn fetch_metrics(addr: &str) -> Option<String> {
@@ -277,6 +346,9 @@ fn report(o: &Opts, r: &mut [BotReport], server: &[String]) {
     let kills: u32 = r.iter().map(|b| b.stats.kills).sum();
     let deaths: u32 = r.iter().map(|b| b.stats.deaths).sum();
     let corrections: u32 = r.iter().map(|b| b.stats.corrections).sum();
+    let handoffs: u32 = r.iter().map(|b| b.stats.zone_changes).sum();
+    let xp: u64 = r.iter().map(|b| b.stats.xp).sum();
+    let looted: u32 = r.iter().map(|b| b.stats.items_looted).sum();
     let misses: u32 = r.iter().map(|b| b.snapshot_misses).sum();
     let damage: f64 = r.iter().map(|b| b.stats.damage).sum();
     let rtt = mean(&r.iter().map(|b| b.rtt_ms).collect::<Vec<_>>());
@@ -284,19 +356,36 @@ fn report(o: &Opts, r: &mut [BotReport], server: &[String]) {
 
     // Overhead the bots can't see: IP + UDP headers, 28 bytes per packet.
     let wire_down = mean(&down) + pk * 28.0;
-    let tick_p99s: Vec<f64> = server.iter().filter_map(|s| field(s, "tick_p99_ms")).collect();
-    let tick_maxs: Vec<f64> = server.iter().filter_map(|s| field(s, "tick_max_ms")).collect();
-    let tick_p50s: Vec<f64> = server.iter().filter_map(|s| field(s, "tick_p50_ms")).collect();
+    let tick_p99s: Vec<f64> = server
+        .iter()
+        .filter_map(|s| field(s, "tick_p99_ms"))
+        .collect();
+    let tick_maxs: Vec<f64> = server
+        .iter()
+        .filter_map(|s| field(s, "tick_max_ms"))
+        .collect();
+    let tick_p50s: Vec<f64> = server
+        .iter()
+        .filter_map(|s| field(s, "tick_p50_ms"))
+        .collect();
     let players: Vec<f64> = server.iter().filter_map(|s| field(s, "players")).collect();
     let view: Vec<f64> = server.iter().filter_map(|s| field(s, "view_avg")).collect();
     let worst_p99 = max(&tick_p99s);
 
     println!();
-    println!("=== results: {} bots, {} s measured ===", r.len(), o.seconds);
+    println!(
+        "=== results: {} bots, {} s measured ===",
+        r.len(),
+        o.seconds
+    );
     println!("connected at end        {connected}/{}", r.len());
     println!(
         "server players          {}",
-        players.iter().map(|p| format!("{p:.0}")).collect::<Vec<_>>().join(", ")
+        players
+            .iter()
+            .map(|p| format!("{p:.0}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     println!(
         "server tick p50 / p99 / max (per 10 s window, ms)   {} / {} / {}",
@@ -311,7 +400,10 @@ fn report(o: &Opts, r: &mut [BotReport], server: &[String]) {
         max(&down) / 1000.0,
         wire_down / 1000.0
     );
-    println!("up per client           mean {:.2} KB/s", mean(&up) / 1000.0);
+    println!(
+        "up per client           mean {:.2} KB/s",
+        mean(&up) / 1000.0
+    );
     println!("packets down per client {pk:.1}/s");
     println!("entities in view        {seen:.1} (client side, mean)");
     println!("mean rtt                {rtt:.1} ms");
@@ -330,15 +422,24 @@ fn report(o: &Opts, r: &mut [BotReport], server: &[String]) {
         );
     }
     println!("movement corrections    {corrections}");
+    println!("progress                {xp} xp gained, {looted} items looted");
+    println!("zone/layer handoffs     {handoffs}");
     println!("snapshot baseline misses {misses}");
 
-    let tick_ok = !tick_p99s.is_empty() && worst_p99 < o.max_tick_p99;
+    // With --login the bots land on whatever layers the world picks, which
+    // may not be the zone behind --metrics: no ticks there means no verdict.
+    let tick_known = tick_p99s.iter().any(|&v| v > 0.0);
+    let tick_ok = !tick_known || worst_p99 < o.max_tick_p99;
     let bw_ok = mean(&down) / 1000.0 < o.max_down_kbps;
     let conn_ok = connected == r.len();
     println!();
     println!(
         "{} tick p99 < {} ms (worst window {:.2} ms)",
-        if tick_ok { "PASS" } else { "FAIL" },
+        match (tick_known, tick_ok) {
+            (false, _) => "SKIP (no zone metrics)",
+            (true, true) => "PASS",
+            (true, false) => "FAIL",
+        },
         o.max_tick_p99,
         worst_p99
     );
@@ -384,9 +485,15 @@ fn fmt_list(v: &[f64]) -> String {
     if v.is_empty() {
         return "n/a".into();
     }
-    v.iter().map(|x| format!("{x:.2}")).collect::<Vec<_>>().join(", ")
+    v.iter()
+        .map(|x| format!("{x:.2}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn join(v: &[f64]) -> String {
-    v.iter().map(|x| format!("{x:.3}")).collect::<Vec<_>>().join(",")
+    v.iter()
+        .map(|x| format!("{x:.3}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }

@@ -34,8 +34,14 @@ fn main() {
         s.bar.iter().position(|a| *a == id).unwrap()
     };
 
-    let mut s = ClientSession::connect(pack, server, Auth::Dev { name: "RotationBot".into() })
-        .expect("connect");
+    let mut s = ClientSession::connect(
+        pack,
+        server,
+        Auth::Dev {
+            name: "RotationBot".into(),
+        },
+    )
+    .expect("connect");
     s.set_fake_lag(latency, loss_pct / 100.0);
     println!("bot: {server}, +{latency} ms RTT, {loss_pct}% loss each way, {seconds} s");
 
@@ -65,7 +71,10 @@ fn main() {
         if let Some((id, _)) = best {
             break id;
         }
-        assert!(start.elapsed() < Duration::from_secs(10), "no training dummy in view");
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "no training dummy in view"
+        );
         std::thread::sleep(Duration::from_millis(2));
     };
     s.target = Some(dummy);
@@ -108,7 +117,10 @@ fn main() {
                     ..
                 } => gaps.push(g),
                 ClientEvent::Hit {
-                    amount, mine: true, heal: false, ..
+                    amount,
+                    mine: true,
+                    heal: false,
+                    ..
                 } => damage += amount,
                 ClientEvent::Error(m) => errors.push(m),
                 _ => {}

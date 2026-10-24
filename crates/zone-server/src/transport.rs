@@ -10,7 +10,9 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::Duration;
 
 use renet::{ClientId, RenetServer};
-use renetcode::{NETCODE_MAX_PACKET_BYTES, NETCODE_USER_DATA_BYTES, NetcodeServer, ServerConfig, ServerResult};
+use renetcode::{
+    NETCODE_MAX_PACKET_BYTES, NETCODE_USER_DATA_BYTES, NetcodeServer, ServerConfig, ServerResult,
+};
 
 const BATCH: usize = 256;
 
@@ -165,8 +167,10 @@ fn send_batch(socket: &UdpSocket, out: &[(SocketAddr, Vec<u8>)]) -> u64 {
     let fd = socket.as_raw_fd();
     let mut errors = 0;
     for chunk in out.chunks(BATCH) {
-        let addrs: Vec<socket2::SockAddr> =
-            chunk.iter().map(|(a, _)| socket2::SockAddr::from(*a)).collect();
+        let addrs: Vec<socket2::SockAddr> = chunk
+            .iter()
+            .map(|(a, _)| socket2::SockAddr::from(*a))
+            .collect();
         let mut iovs: Vec<libc::iovec> = chunk
             .iter()
             .map(|(_, b)| libc::iovec {
@@ -278,12 +282,7 @@ fn recv_batch(
     let mut out = Vec::with_capacity(got as usize);
     for i in 0..got as usize {
         // SAFETY: the kernel filled names[i] with msg_namelen bytes.
-        let addr = unsafe {
-            socket2::SockAddr::new(
-                names[i],
-                msgs[i].msg_hdr.msg_namelen,
-            )
-        };
+        let addr = unsafe { socket2::SockAddr::new(names[i], msgs[i].msg_hdr.msg_namelen) };
         if let Some(a) = addr.as_socket() {
             out.push((msgs[i].msg_len as usize, a));
         }

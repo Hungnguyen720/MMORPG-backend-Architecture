@@ -55,7 +55,10 @@ fn channel_name(c: &ChatChannel) -> &'static str {
 }
 
 fn resolve(host: &str, port: u16) -> Option<std::net::SocketAddr> {
-    (host, port).to_socket_addrs().ok().and_then(|mut a| a.next())
+    (host, port)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
 }
 
 #[godot_api]
@@ -64,7 +67,13 @@ impl CombatClient {
     /// directory or a compiled .pack file. Returns "" on success, otherwise
     /// an error message.
     #[func]
-    fn connect_dev(&mut self, host: GString, port: i32, content: GString, name: GString) -> GString {
+    fn connect_dev(
+        &mut self,
+        host: GString,
+        port: i32,
+        content: GString,
+        name: GString,
+    ) -> GString {
         let pack = match ContentPack::load(content.to_string()) {
             Ok(p) => p,
             Err(e) => return GString::from(&format!("content pack: {e}")),
@@ -72,7 +81,13 @@ impl CombatClient {
         let Some(addr) = resolve(&host.to_string(), port as u16) else {
             return GString::from(&format!("cannot resolve {host}"));
         };
-        match ClientSession::connect(pack, addr, Auth::Dev { name: name.to_string() }) {
+        match ClientSession::connect(
+            pack,
+            addr,
+            Auth::Dev {
+                name: name.to_string(),
+            },
+        ) {
             Ok(s) => {
                 self.session = Some(s);
                 GString::new()
@@ -177,7 +192,11 @@ impl CombatClient {
         let pack = match lc.sync_pack(local) {
             Ok((p, downloaded)) => {
                 if downloaded {
-                    godot_print!("downloaded content pack \"{}\" {:016x}", p.tenant.name, p.hash);
+                    godot_print!(
+                        "downloaded content pack \"{}\" {:016x}",
+                        p.tenant.name,
+                        p.hash
+                    );
                 }
                 p
             }
@@ -354,8 +373,11 @@ impl CombatClient {
         if let Some(s) = &self.session {
             for m in &s.party {
                 out.push(
-                    &dict(&[("name", m.name.to_variant()), ("leader", m.leader.to_variant())])
-                        .to_variant(),
+                    &dict(&[
+                        ("name", m.name.to_variant()),
+                        ("leader", m.leader.to_variant()),
+                    ])
+                    .to_variant(),
                 );
             }
         }
@@ -510,11 +532,11 @@ impl CombatClient {
 
     #[func]
     fn ability_info(&self, slot: i32) -> VarDictionary {
-        let Some(a) = self.session.as_ref().and_then(|s| {
-            s.bar
-                .get(slot as usize)
-                .and_then(|id| s.pack.ability(*id))
-        }) else {
+        let Some(a) = self
+            .session
+            .as_ref()
+            .and_then(|s| s.bar.get(slot as usize).and_then(|id| s.pack.ability(*id)))
+        else {
             return VarDictionary::new();
         };
         dict(&[
@@ -598,7 +620,10 @@ impl CombatClient {
         for b in &z.blockers {
             blockers.push(
                 &dict(&[
-                    ("center", Vector2::new(b.center[0], b.center[1]).to_variant()),
+                    (
+                        "center",
+                        Vector2::new(b.center[0], b.center[1]).to_variant(),
+                    ),
                     ("size", Vector2::new(b.size[0], b.size[1]).to_variant()),
                     ("height", b.height.to_variant()),
                 ])
@@ -607,12 +632,23 @@ impl CombatClient {
         }
         let mut portals = VarArray::new();
         for p in &z.portals {
-            let to = s.pack.zone(&p.to_zone).map_or(p.to_zone.clone(), |z| z.name.clone());
+            let to = s
+                .pack
+                .zone(&p.to_zone)
+                .map_or(p.to_zone.clone(), |z| z.name.clone());
             portals.push(
                 &dict(&[
                     ("pos", v3(p.pos).to_variant()),
                     ("radius", p.radius.to_variant()),
-                    ("name", if p.name.is_empty() { to } else { p.name.clone() }.to_variant()),
+                    (
+                        "name",
+                        if p.name.is_empty() {
+                            to
+                        } else {
+                            p.name.clone()
+                        }
+                        .to_variant(),
+                    ),
                 ])
                 .to_variant(),
             );
@@ -621,7 +657,10 @@ impl CombatClient {
             ("id", z.id.to_variant()),
             ("name", z.name.to_variant()),
             ("layer", (s.layer as i64).to_variant()),
-            ("half_extent", Vector2::new(z.half_extent[0], z.half_extent[1]).to_variant()),
+            (
+                "half_extent",
+                Vector2::new(z.half_extent[0], z.half_extent[1]).to_variant(),
+            ),
             ("ground_color", z.ground_color.to_variant()),
             ("scene", z.scene.to_variant()),
             ("blockers", blockers.to_variant()),
@@ -657,7 +696,10 @@ impl CombatClient {
                 );
             }
             let (cast_name, cast_progress) = match s.remote_cast(*id) {
-                Some((ab, p)) => (s.pack.ability(ab).map_or(String::new(), |a| a.name.clone()), p),
+                Some((ab, p)) => (
+                    s.pack.ability(ab).map_or(String::new(), |a| a.name.clone()),
+                    p,
+                ),
                 None => (String::new(), 0.0),
             };
             let (kind, model, color, scale) = match e.kind() {
@@ -782,10 +824,7 @@ impl CombatClient {
                 ]),
                 ClientEvent::ZoneChange { zone, layer } => dict(&[
                     ("type", "zone_change".to_variant()),
-                    (
-                        "zone",
-                        s.pack.zones[zone as usize].name.to_variant(),
-                    ),
+                    ("zone", s.pack.zones[zone as usize].name.to_variant()),
                     ("layer", (layer as i64).to_variant()),
                 ]),
                 ClientEvent::Confirmed {

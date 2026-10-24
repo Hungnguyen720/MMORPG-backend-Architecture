@@ -43,15 +43,22 @@ pub enum SocialOp {
 
 /// What a zone asks of the services thread.
 pub enum SvcReq {
-    Load { client: ClientId, user: TokenUser },
-    SaveChar { record: CharRecord },
+    Load {
+        client: ClientId,
+        user: TokenUser,
+    },
+    SaveChar {
+        record: CharRecord,
+    },
     SaveInv {
         character: i64,
         items: Vec<ItemRow>,
         economy: Vec<(String, String, String, i32)>,
     },
     /// Final save and presence cleanup.
-    Logout { record: CharRecord },
+    Logout {
+        record: CharRecord,
+    },
     /// Handoff: ask the world service where `zone` should be entered.
     Place {
         client: ClientId,
@@ -60,9 +67,20 @@ pub enum SvcReq {
         zone: String,
         avoid_layer: Option<u16>,
     },
-    Social { character: i64, name: String, op: SocialOp },
-    WorldChat { from: String, text: String },
-    Heartbeat { players: Vec<(i64, String)>, count: usize, draining: bool },
+    Social {
+        character: i64,
+        name: String,
+        op: SocialOp,
+    },
+    WorldChat {
+        from: String,
+        text: String,
+    },
+    Heartbeat {
+        players: Vec<(i64, String)>,
+        count: usize,
+        draining: bool,
+    },
     Closed,
 }
 
@@ -172,7 +190,9 @@ async fn connect(
     proc_name: String,
 ) -> Result<Ctx, String> {
     let db = Db::connect(&env.db, 16).map_err(|e| format!("postgres: {e}"))?;
-    db.migrate().await.map_err(|e| format!("postgres migrate: {e}"))?;
+    db.migrate()
+        .await
+        .map_err(|e| format!("postgres migrate: {e}"))?;
     let client = redis::Client::open(env.redis.as_str()).map_err(|e| format!("redis: {e}"))?;
     let redis = client
         .get_multiplexed_async_connection()
@@ -207,15 +227,16 @@ async fn run(
         shards.push(stx);
     }
     tokio::spawn(bus_listener(ctx.clone()));
-    tokio::spawn(proc_heartbeat(ctx.clone(), format!("http://{public_ip}:{control_port}")));
+    tokio::spawn(proc_heartbeat(
+        ctx.clone(),
+        format!("http://{public_ip}:{control_port}"),
+    ));
     tokio::spawn(control_server(ctx.clone(), control_port, spawn_tx));
 
     while let Some(env) = rx.recv().await {
         let character = match &env.req {
             SvcReq::SaveChar { record } | SvcReq::Logout { record } => Some(record.id),
-            SvcReq::SaveInv { character, .. } | SvcReq::Place { character, .. } => {
-                Some(*character)
-            }
+            SvcReq::SaveInv { character, .. } | SvcReq::Place { character, .. } => Some(*character),
             _ => None,
         };
         match character {
@@ -547,7 +568,10 @@ async fn social(ctx: &mut Ctx, me: i64, my_name: &str, op: SocialOp) -> Result<(
                 to_char(ctx, me, sys("You have no pending invite.".into())).await;
                 return Ok(());
             };
-            let _: Result<i32, _> = redis::cmd("DEL").arg(&key).query_async(&mut ctx.redis).await;
+            let _: Result<i32, _> = redis::cmd("DEL")
+                .arg(&key)
+                .query_async(&mut ctx.redis)
+                .await;
             let (leader, leader_name) = inv.split_once(':').ok_or("bad invite")?;
             let leader: i64 = leader.parse().map_err(|_| "bad invite")?;
             let pid = get_str(ctx, keys::char_party(&t, leader))

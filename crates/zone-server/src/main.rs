@@ -12,6 +12,11 @@ mod svc;
 mod transport;
 mod zone;
 
+// The tick, its rayon workers and the net thread all allocate per client
+// per tick; glibc malloc contends badly under that.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -199,8 +204,8 @@ fn main() {
                 .filter_map(|z| z.addr.rsplit(':').next()?.parse().ok())
                 .collect()
         };
-        let port = (opts.ports.0..=opts.ports.1)
-            .find(|p| !in_use.contains(p) && !used_ports.contains(p));
+        let port =
+            (opts.ports.0..=opts.ports.1).find(|p| !in_use.contains(p) && !used_ports.contains(p));
         let result = match (port, proc.pack.zone_index(&cmd.zone)) {
             (_, None) => Err(format!("unknown zone {}", cmd.zone)),
             (None, _) => Err("no free ports".to_string()),
@@ -277,7 +282,15 @@ fn start_zone(proc: &Process, spec: ZoneSpec, permanent: bool) -> Result<String,
     std::thread::Builder::new()
         .name(format!("zone-{}-{}", spec.zone, spec.layer))
         .spawn(move || {
-            run_zone(proc2.clone(), zone_idx, spec, slot, handle.clone(), from_net, to_net);
+            run_zone(
+                proc2.clone(),
+                zone_idx,
+                spec,
+                slot,
+                handle.clone(),
+                from_net,
+                to_net,
+            );
             alive.store(false, std::sync::atomic::Ordering::Relaxed);
             proc2
                 .registry
@@ -360,7 +373,9 @@ fn run_zone(
                             None => zone.kicks.push(client),
                         }
                     } else {
-                        let name = user_data.map(|d| name_from_user_data(&d)).unwrap_or_default();
+                        let name = user_data
+                            .map(|d| name_from_user_data(&d))
+                            .unwrap_or_default();
                         zone.add_player(client, name, 0, 1, None, now);
                     }
                 }
@@ -382,7 +397,11 @@ fn run_zone(
                     zone.remove_player(client);
                 }
                 NetIn::Move { client, input } => zone.handle_move(client, input, now),
-                NetIn::Msg { client, msg, rtt_ms } => zone.handle(client, msg, now, now_us, rtt_ms),
+                NetIn::Msg {
+                    client,
+                    msg,
+                    rtt_ms,
+                } => zone.handle(client, msg, now, now_us, rtt_ms),
                 NetIn::Svc(ev) => match ev {
                     SvcEvent::Loaded { client, result } => {
                         let Some(user) = pending.remove(&client) else {
@@ -429,7 +448,10 @@ fn run_zone(
                     SvcEvent::Bus(msg) => zone.on_bus(msg),
                     SvcEvent::Drain => {
                         if !zone.draining {
-                            println!("[{} L{}] draining: merging players into other layers", spec.zone, spec.layer);
+                            println!(
+                                "[{} L{}] draining: merging players into other layers",
+                                spec.zone, spec.layer
+                            );
                         }
                         zone.draining = true;
                     }
@@ -571,7 +593,9 @@ fn housekeeping(zone: &mut Zone, now: u64, layer: u16) {
         };
         match &p.handoff {
             Handoff::Sent { kick_at, .. } if *kick_at <= now => late.push(p.client_id),
-            Handoff::None if zone.draining && p.character != 0 && to_move.len() < DRAIN_PER_TICK => {
+            Handoff::None
+                if zone.draining && p.character != 0 && to_move.len() < DRAIN_PER_TICK =>
+            {
                 to_move.push((e.id, e.pos))
             }
             _ => {}
@@ -591,7 +615,11 @@ fn name_from_user_data(d: &[u8; 256]) -> String {
 }
 
 fn find_content() -> String {
-    for p in ["tenants/default", "../tenants/default", "../../tenants/default"] {
+    for p in [
+        "tenants/default",
+        "../tenants/default",
+        "../../tenants/default",
+    ] {
         if std::path::Path::new(p).is_dir() {
             return p.to_string();
         }

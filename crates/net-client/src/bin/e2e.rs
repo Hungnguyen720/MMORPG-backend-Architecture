@@ -11,9 +11,9 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use combat_core::ContentPack;
 use combat_core::codec::flags;
 use combat_core::movement::dist_xz;
-use combat_core::ContentPack;
 use net_client::brain::Brain;
 use net_client::login::LoginClient;
 use net_client::{Auth, ClientEvent, ClientSession};
@@ -44,7 +44,9 @@ fn parse() -> Opts {
     let mut a = std::env::args().skip(1);
     let mut o = Opts {
         cmd: a.next().unwrap_or_else(|| {
-            eprintln!("usage: e2e level|verify|loot-hold [--login URL] [--email E] [--name N] [--state F]");
+            eprintln!(
+                "usage: e2e level|verify|loot-hold [--login URL] [--email E] [--name N] [--state F]"
+            );
             std::process::exit(2)
         }),
         login: "http://127.0.0.1:7000".into(),
@@ -124,7 +126,8 @@ fn enter(o: &Opts) -> ClientSession {
         "{} (level {}) enters {} layer {} at {}",
         ch.name, ch.level, ticket.zone, ticket.layer, ticket.addr
     ));
-    let mut s = ClientSession::connect(pack, ticket.addr, Auth::Token(ticket.token)).expect("connect");
+    let mut s =
+        ClientSession::connect(pack, ticket.addr, Auth::Token(ticket.token)).expect("connect");
     let t0 = Instant::now();
     while !(s.is_connected() && !s.bag.is_empty()) {
         s.update();
@@ -140,7 +143,9 @@ fn enter(o: &Opts) -> ClientSession {
 fn snapshot(s: &ClientSession) -> Saved {
     let mut items = BTreeMap::new();
     for (item, n) in s.bag.iter().chain(s.equip.iter()).flatten() {
-        *items.entry(s.pack.items[*item as usize].id.clone()).or_insert(0) += n;
+        *items
+            .entry(s.pack.items[*item as usize].id.clone())
+            .or_insert(0) += n;
     }
     Saved {
         zone: s.pack.zones[s.zone as usize].id.clone(),
@@ -157,7 +162,10 @@ fn frame(s: &mut ClientSession, b: &mut Brain) {
         match e {
             ClientEvent::Xp { gained, leveled } => {
                 if *leveled {
-                    log(format!("LEVEL UP: level {} ({} xp from that kill)", s.level, gained));
+                    log(format!(
+                        "LEVEL UP: level {} ({} xp from that kill)",
+                        s.level, gained
+                    ));
                 }
             }
             ClientEvent::Looted { items } => {
@@ -171,7 +179,9 @@ fn frame(s: &mut ClientSession, b: &mut Brain) {
                 "handoff to {} layer {layer}",
                 s.pack.zones[*zone as usize].name
             )),
-            ClientEvent::Chat { from, text, .. } if from.is_empty() => log(format!("system: {text}")),
+            ClientEvent::Chat { from, text, .. } if from.is_empty() => {
+                log(format!("system: {text}"))
+            }
             _ => {}
         }
     }
@@ -222,7 +232,9 @@ fn travel(s: &mut ClientSession, to_zone: &str, deadline: Instant) {
             log(format!("arrived in {}", s.pack.zones[s.zone as usize].name));
             return;
         }
-        let in_combat = s.my_state().is_some_and(|st| st.flags & flags::IN_COMBAT != 0);
+        let in_combat = s
+            .my_state()
+            .is_some_and(|st| st.flags & flags::IN_COMBAT != 0);
         if !s.is_connected() || s.dead() {
             frame(s, &mut b);
             continue;
@@ -381,7 +393,10 @@ fn main() {
             loop {
                 assert!(Instant::now() < deadline, "timed out waiting for loot");
                 frame(&mut s, &mut b);
-                if b.seen.iter().any(|e| matches!(e, ClientEvent::Looted { .. })) {
+                if b.seen
+                    .iter()
+                    .any(|e| matches!(e, ClientEvent::Looted { .. }))
+                {
                     break;
                 }
             }

@@ -690,7 +690,10 @@ impl ContentPack {
             return Err("tenant.xp_per_level is empty".into());
         }
         if self.zone_index(&t.start_zone).is_none() {
-            return Err(format!("tenant.start_zone: unknown zone '{}'", t.start_zone));
+            return Err(format!(
+                "tenant.start_zone: unknown zone '{}'",
+                t.start_zone
+            ));
         }
         if self.classes.is_empty() {
             return Err("pack has no classes".into());
@@ -737,9 +740,8 @@ impl ContentPack {
             }
         }
         for z in &self.zones {
-            let inside = |p: [f32; 3]| {
-                p[0].abs() <= z.half_extent[0] && p[2].abs() <= z.half_extent[1]
-            };
+            let inside =
+                |p: [f32; 3]| p[0].abs() <= z.half_extent[0] && p[2].abs() <= z.half_extent[1];
             if z.half_extent[0] * 2.0 > crate::codec::MAX_ZONE_SIZE
                 || z.half_extent[1] * 2.0 > crate::codec::MAX_ZONE_SIZE
             {
@@ -750,19 +752,28 @@ impl ContentPack {
                 ));
             }
             if !inside(z.player_spawn) || !inside(z.graveyard) {
-                return Err(format!("zone {}: spawn or graveyard outside the zone", z.id));
+                return Err(format!(
+                    "zone {}: spawn or graveyard outside the zone",
+                    z.id
+                ));
             }
             for s in &z.spawns {
                 if self.mob_index(&s.mob).is_none() {
                     return Err(format!("zone {}: unknown mob '{}'", z.id, s.mob));
                 }
                 if !inside(s.pos) {
-                    return Err(format!("zone {}: spawn of {} outside the zone", z.id, s.mob));
+                    return Err(format!(
+                        "zone {}: spawn of {} outside the zone",
+                        z.id, s.mob
+                    ));
                 }
             }
             for p in &z.portals {
                 let Some(to) = self.zone_index(&p.to_zone) else {
-                    return Err(format!("zone {}: portal to unknown zone '{}'", z.id, p.to_zone));
+                    return Err(format!(
+                        "zone {}: portal to unknown zone '{}'",
+                        z.id, p.to_zone
+                    ));
                 };
                 let tz = &self.zones[to as usize];
                 if p.to_pos[0].abs() > tz.half_extent[0] || p.to_pos[2].abs() > tz.half_extent[1] {
