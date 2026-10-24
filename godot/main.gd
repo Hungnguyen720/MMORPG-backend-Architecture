@@ -19,6 +19,7 @@ extends Node3D
 ##   --loss PERCENT       initial fake loss, default 0
 ##   --autotest           fight the nearest mob for 10 s, print a summary, quit
 ##   --screenshot PATH    with --autotest, save a PNG of the window halfway through
+##   --demo [--reskin]    scripted player for gameplay videos (demo_pilot.gd)
 
 const CAMERA_OFFSET := Vector3(0, 17, 15)
 const SLOT_SIZE := 64
@@ -30,6 +31,7 @@ var server_port := 5000
 var content_path := ""
 var char_name := ""
 var autotest := false
+var demo := false
 var screenshot_path := ""
 var facing := 0.0
 var zone_id := ""
@@ -131,6 +133,8 @@ func _ready() -> void:
 				i += 1
 			"--autotest":
 				autotest = true
+			"--demo":
+				demo = true
 			"--screenshot":
 				screenshot_path = args[i + 1]
 				i += 1
@@ -172,6 +176,10 @@ func _ready() -> void:
 		return
 	_apply_fake_lag()
 	_log("Connecting to %s:%d ..." % [server_host, server_port])
+	if demo:
+		var pilot: Node = load("res://demo_pilot.gd").new()
+		pilot.main = self
+		add_child(pilot)
 
 
 # --------------------------------------------------------------------------
