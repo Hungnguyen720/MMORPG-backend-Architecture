@@ -1,0 +1,20 @@
+# Tenant config: who this game is. The engine never hard-codes any of it.
+tenant:
+  id: default
+  name: Elderwood Online
+  xp_rate: 1.0
+  # XP to go from level N to N+1 (index 0 = level 1). Length sets the cap.
+  xp_per_level: [400, 900, 1500, 2300, 3300, 4500, 6000, 7800, 10000]
+  start_zone: elderwood
+  layer_soft_cap: 150
+  bag_slots: 20
+  starting_items:
+    - { item: minor_healing_potion, count: 3 }
+    - { item: mana_draught, count: 2 }
+  theme:
+    accent: "#5ab4ff"
+    panel: "#14171ecc"
+    hp: "#cc3333"
+    mana: "#4073ff"
+    xp: "#b04fd6"
+    text: "#e8ecf2"

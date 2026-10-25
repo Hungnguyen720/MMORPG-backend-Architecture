@@ -1,0 +1,120 @@
+mobs:
+  - id: effigy
+    name: Burnt Effigy
+    max_hp: 250000
+    dummy: true
+    reset_after_ms: 10000
+    model: dummy
+    color: "#3b2a22"
+
+  - id: ash_ghoul
+    name: Ash Ghoul
+    level: 1
+    max_hp: 3000
+    melee_damage: 150
+    attack_ms: 2000
+    aggro_radius: 12
+    wander_radius: 6
+    move_speed: 6.0
+    xp: 70
+    loot: ghoul
+    model: ghoul
+    color: "#6e6a64"
+
+  - id: cinder_hound
+    name: Cinder Hound
+    level: 2
+    max_hp: 3400
+    melee_damage: 170
+    attack_ms: 1800
+    abilities: [cinder_maw]
+    aggro_radius: 14
+    wander_radius: 10
+    move_speed: 8.0
+    xp: 85
+    loot: hound
+    model: quadruped_hound
+    color: "#5a2a1a"
+    scale: 0.9
+
+  - id: pale_acolyte
+    name: Pale Acolyte
+    level: 3
+    max_hp: 3300
+    melee_damage: 90
+    abilities: [pale_flame]
+    spell_power: 110
+    mana: 1000
+    aggro_radius: 18
+    wander_radius: 0
+    move_speed: 5.5
+    xp: 120
+    loot: acolyte
+    model: acolyte
+    color: "#d9d4c7"
+
+  - id: bone_colossus
+    name: Bone Colossus
+    level: 5
+    max_hp: 36000
+    melee_damage: 700
+    attack_ms: 2800
+    melee_range: 4
+    aggro_radius: 10
+    leash_radius: 30
+    move_speed: 4.0
+    xp: 650
+    loot: colossus
+    model: colossus
+    color: "#cfc6b0"
+    scale: 2.0
+
+  # ---- The Pale Vault ----
+  - id: vault_sentinel
+    name: Vault Sentinel
+    level: 4
+    max_hp: 5600
+    melee_damage: 260
+    attack_ms: 2200
+    aggro_radius: 12
+    wander_radius: 0
+    move_speed: 6.0
+    xp: 170
+    loot: vault
+    model: sentinel
+    color: "#8f8a80"
+
+  - id: pale_inquisitor
+    name: Pale Inquisitor
+    level: 6
+    max_hp: 5200
+    melee_damage: 120
+    abilities: [pale_flame]
+    spell_power: 220
+    mana: 1500
+    aggro_radius: 18
+    move_speed: 5.5
+    xp: 230
+    loot: vault
+    model: acolyte
+    color: "#f2efe6"
+    scale: 1.1
+
+  - id: the_pale_king
+    name: The Pale King
+    level: 8
+    max_hp: 80000
+    melee_damage: 900
+    attack_ms: 2600
+    abilities: [pale_flame]
+    spell_power: 400
+    mana: 5000
+    melee_range: 4
+    aggro_radius: 16
+    leash_radius: 40
+    move_speed: 5.0
+    xp: 2000
+    loot: pale_king
+    model: pale_king
+    color: "#f7f4ea"
+    scale: 1.6

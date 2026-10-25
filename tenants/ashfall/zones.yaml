@@ -1,0 +1,52 @@
+zones:
+  - id: cinderreach
+    name: Cinderreach
+    half_extent: [150, 150]
+    player_spawn: [0, 0, 20]
+    graveyard: [10, 0, 30]
+    scene: ashland
+    ground_color: "#2b2422"
+    blockers:
+      # Collapsed chapel around the spawn, open to the north.
+      - { center: [-14, 20], size: [2, 24], height: 5 }
+      - { center: [14, 20], size: [2, 24], height: 5 }
+      - { center: [0, 32], size: [30, 2], height: 5 }
+      # Lava fissure walls cutting the plain.
+      - { center: [-50, -20], size: [60, 3], height: 2 }
+      - { center: [60, 10], size: [3, 50], height: 2 }
+      # Acolyte shrine ring.
+      - { center: [-80, 60], size: [24, 2], height: 4 }
+      - { center: [-92, 75], size: [2, 30], height: 4 }
+      - { center: [-68, 75], size: [2, 30], height: 4 }
+    spawns:
+      - { mob: effigy, pos: [0, 0, 8] }
+      - { mob: effigy, pos: [-6, 0, 10] }
+      - { mob: ash_ghoul, pos: [30, 0, -40], count: 8, radius: 20, respawn_ms: 20000 }
+      - { mob: ash_ghoul, pos: [-40, 0, -60], count: 6, radius: 18, respawn_ms: 20000 }
+      - { mob: cinder_hound, pos: [100, 0, -40], count: 7, radius: 22, respawn_ms: 20000 }
+      - { mob: pale_acolyte, pos: [-80, 0, 75], count: 5, radius: 8, respawn_ms: 25000 }
+      - { mob: bone_colossus, pos: [100, 0, 100], respawn_ms: 120000 }
+    portals:
+      - { pos: [0, 0, -135], radius: 3, to_zone: pale_vault, to_pos: [0, 0, 85], name: The Pale Vault }
+
+  - id: pale_vault
+    name: The Pale Vault
+    half_extent: [90, 100]
+    player_spawn: [0, 0, 85]
+    graveyard: [0, 0, 90]
+    scene: vault
+    ground_color: "#24262b"
+    blockers:
+      - { center: [-10, 60], size: [2, 40], height: 6 }
+      - { center: [10, 60], size: [2, 40], height: 6 }
+      - { center: [-35, 0], size: [40, 2], height: 5 }
+      - { center: [35, 0], size: [40, 2], height: 5 }
+      - { center: [-20, -55], size: [30, 2], height: 7 }
+      - { center: [20, -55], size: [30, 2], height: 7 }
+    spawns:
+      - { mob: vault_sentinel, pos: [-40, 0, 30], count: 5, radius: 12, respawn_ms: 25000 }
+      - { mob: vault_sentinel, pos: [40, 0, 30], count: 5, radius: 12, respawn_ms: 25000 }
+      - { mob: pale_inquisitor, pos: [0, 0, -25], count: 4, radius: 10, respawn_ms: 30000 }
+      - { mob: the_pale_king, pos: [0, 0, -80], respawn_ms: 300000 }
+    portals:
+      - { pos: [0, 0, 97], radius: 3, to_zone: cinderreach, to_pos: [0, 0, -128], name: Cinderreach }

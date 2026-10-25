@@ -1,0 +1,16 @@
+classes:
+  # The Phase 0 class. Numbers unchanged from the combat-feel prototype.
+  - id: spellweaver
+    name: Spellweaver
+    max_hp: 5000
+    max_mana: 1000
+    mana_regen_per_sec: 18
+    hp_regen_per_sec_ooc: 120
+    spell_power: 400
+    crit_chance: 0.15
+    move_speed: 7.0          # metres per second
+    hp_per_level: 400
+    mana_per_level: 40
+    spell_power_per_level: 30
+    abilities: [frost_lance, ice_shard, arcane_torrent, searing_brand, arcane_surge]
+    model: humanoid_robed

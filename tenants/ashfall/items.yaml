@@ -1,0 +1,62 @@
+items:
+  - { id: grave_ash, name: Grave Ash, rarity: poor, stack: 50, icon: ash }
+  - { id: hound_fang, name: Charred Fang, rarity: poor, stack: 20, icon: fang }
+  - { id: pale_wax, name: Pale Wax, rarity: common, stack: 20, icon: wax }
+
+  - id: ember_tonic
+    name: Ember Tonic
+    rarity: common
+    stack: 10
+    use_cooldown_ms: 30000
+    icon: tonic
+    description: "Tastes of smoke. Restores 1,800 health."
+    on_use:
+      - heal: { base: 1800 }
+
+  - id: void_salts
+    name: Void Salts
+    rarity: common
+    stack: 10
+    use_cooldown_ms: 30000
+    icon: salts
+    description: "Restores 350 mana."
+    on_use:
+      - restore_mana: { amount: 350 }
+
+  - { id: ashen_cowl, name: Ashen Cowl, rarity: common, equip: head, stats: { max_hp: 150, spell_power: 5 }, icon: cowl }
+  - { id: cinderplate, name: Cinderplate Hauberk, rarity: uncommon, equip: chest, stats: { max_hp: 380, spell_power: 8 }, icon: plate }
+  - { id: gravewalker_greaves, name: Gravewalker Greaves, rarity: common, equip: legs, stats: { max_hp: 200 }, icon: greaves }
+  - { id: hexed_sickle, name: Hexed Sickle, rarity: uncommon, equip: weapon, stats: { spell_power: 50 }, icon: sickle }
+  - { id: colossus_heart, name: Heart of the Colossus, rarity: rare, equip: trinket, stats: { max_hp: 600, spell_power: 20 }, icon: heart }
+  - { id: vaultguard_mail, name: Vaultguard Mail, rarity: uncommon, equip: chest, stats: { max_hp: 520, spell_power: 18 }, icon: mail }
+  - { id: kings_rebuke, name: "The King's Rebuke", rarity: epic, equip: weapon, stats: { spell_power: 120, max_hp: 300 }, icon: blade }
+
+loot_tables:
+  - id: ghoul
+    entries:
+      - { item: grave_ash, chance: 0.75, min: 1, max: 3 }
+      - { item: ember_tonic, chance: 0.15 }
+      - { item: gravewalker_greaves, chance: 0.05 }
+  - id: hound
+    entries:
+      - { item: hound_fang, chance: 0.7, min: 1, max: 2 }
+      - { item: ember_tonic, chance: 0.12 }
+      - { item: ashen_cowl, chance: 0.05 }
+  - id: acolyte
+    entries:
+      - { item: pale_wax, chance: 0.6 }
+      - { item: void_salts, chance: 0.25 }
+      - { item: cinderplate, chance: 0.06 }
+      - { item: hexed_sickle, chance: 0.04 }
+  - id: colossus
+    entries:
+      - { item: colossus_heart, chance: 1.0 }
+  - id: vault
+    entries:
+      - { item: grave_ash, chance: 0.7, min: 1, max: 2 }
+      - { item: ember_tonic, chance: 0.2 }
+      - { item: vaultguard_mail, chance: 0.05 }
+  - id: pale_king
+    entries:
+      - { item: kings_rebuke, chance: 0.6 }
+      - { item: colossus_heart, chance: 0.3 }
