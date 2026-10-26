@@ -52,13 +52,13 @@ fn main() {
         );
         std::thread::sleep(Duration::from_millis(2));
     }
-    // Stand still in range of the dummy.
+    // Stand still at the spawn point, in range of the dummy.
     while s.dummy().is_none() {
         s.update();
         std::thread::sleep(Duration::from_millis(2));
     }
-    s.target = s.dummy();
-    s.set_local_move([0.0, 0.0, -2.0], 0.0, false);
+    let dummy = s.dummy();
+    s.set_target(dummy);
 
     let (mut gaps, mut errors, mut damage, mut presses) =
         (Vec::<u32>::new(), Vec::<String>::new(), 0.0f32, 0u32);

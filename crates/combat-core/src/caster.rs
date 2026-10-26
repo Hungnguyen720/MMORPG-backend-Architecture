@@ -17,6 +17,8 @@ pub enum FailReason {
     NoTarget,
     Moving,
     UnknownAbility,
+    InvalidTarget,
+    Dead,
 }
 
 impl FailReason {
@@ -30,6 +32,8 @@ impl FailReason {
             FailReason::NoTarget => "You have no target",
             FailReason::Moving => "Can't do that while moving",
             FailReason::UnknownAbility => "Unknown ability",
+            FailReason::InvalidTarget => "Invalid target",
+            FailReason::Dead => "You are dead",
         }
     }
 }
