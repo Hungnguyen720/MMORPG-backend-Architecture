@@ -9,7 +9,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::{Instant, SystemTime};
 
 use combat_core::movement::dist_xz;
-use combat_core::protocol::{self, ClientMsg, EntityKind, ServerMsg, StopReason};
+use combat_core::protocol::{self, ClientMsg, EntityKind, PawnCmd, ServerMsg, StopReason};
 use combat_core::{
     AbilityId, AuraId, CastCtx, CasterState, ContentPack, EntityId, FailReason, Ms, PROTOCOL_ID,
     Started, channel, connection_config,
@@ -26,12 +26,26 @@ pub const INTERP_DELAY_MS: f64 = 100.0;
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
     Hit {
+        source: EntityId,
         target: EntityId,
         ability: AbilityId,
         aura: Option<AuraId>,
         amount: f32,
         crit: bool,
         mine: bool,
+    },
+    /// A pawn's or mob's basic attack or heal. `mine` if the source is us
+    /// or one of our pawns.
+    Swing {
+        source: EntityId,
+        target: EntityId,
+        amount: f32,
+        crit: bool,
+        heal: bool,
+        mine: bool,
+    },
+    Died {
+        entity: EntityId,
     },
     Error(String),
     Log(String),
@@ -58,6 +72,10 @@ struct Rollback {
 
 pub struct RemoteEntity {
     pub kind: EntityKind,
+    /// Index into the pack's `mobs` or `pawns`.
+    pub def: u16,
+    pub owner: Option<EntityId>,
+    pub target: Option<EntityId>,
     buffer: VecDeque<(f64, [f32; 3], f32)>,
     pub hp: f32,
     pub max_hp: f32,
@@ -88,7 +106,11 @@ pub struct ClientSession {
     pub moving: bool,
     last_move_sent: Ms,
     last_sent_moving: bool,
+    /// Our selection. Change it with `set_target` so the server (and our
+    /// pawns) hear about it.
     pub target: Option<EntityId>,
+    pub hp: f32,
+    pub max_hp: f32,
     pub entities: HashMap<EntityId, RemoteEntity>,
     server_offset: Option<f64>,
     events: Vec<ClientEvent>,
@@ -131,6 +153,8 @@ impl ClientSession {
             last_move_sent: 0,
             last_sent_moving: false,
             target: None,
+            hp: 1.0,
+            max_hp: 1.0,
             entities: HashMap::new(),
             server_offset: None,
             events: Vec::new(),
@@ -174,6 +198,32 @@ impl ClientSession {
 
     pub fn queued_ability(&self) -> Option<AbilityId> {
         self.queued.as_ref().map(|q| q.ability)
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.me.is_some() && self.hp <= 0.0
+    }
+
+    pub fn set_target(&mut self, target: Option<EntityId>) {
+        if target != self.target {
+            self.target = target;
+            if self.me.is_some() {
+                self.send(channel::COMBAT, &ClientMsg::SetTarget { target });
+            }
+        }
+    }
+
+    pub fn pawn_command(&mut self, cmd: PawnCmd) {
+        if self.me.is_some() {
+            self.send(channel::COMBAT, &ClientMsg::PawnCommand { cmd });
+        }
+    }
+
+    /// True if `id` is something we may attack right now.
+    pub fn attackable(&self, id: EntityId) -> bool {
+        self.entities
+            .get(&id)
+            .is_some_and(|e| e.kind.hostile() && e.hp > 0.0)
     }
 
     pub fn dummy(&self) -> Option<EntityId> {
@@ -253,6 +303,7 @@ impl ClientSession {
 
     fn ctx(&self, target: Option<EntityId>) -> CastCtx {
         let distance = target
+            .filter(|t| self.attackable(*t))
             .and_then(|t| self.entity_pos(t))
             .map(|tp| dist_xz(self.pos, tp));
         CastCtx {
@@ -273,11 +324,21 @@ impl ClientSession {
             return;
         }
         let now = self.now();
+        if self.is_dead() {
+            self.events
+                .push(ClientEvent::Error(FailReason::Dead.text().into()));
+            return;
+        }
         let Some(target) = self.target else {
             self.events
                 .push(ClientEvent::Error(FailReason::NoTarget.text().into()));
             return;
         };
+        if self.entities.contains_key(&target) && !self.attackable(target) {
+            self.events
+                .push(ClientEvent::Error(FailReason::InvalidTarget.text().into()));
+            return;
+        }
         if self.caster.ready_at(ability, &def) > now {
             if self.caster.in_queue_window(ability, &def, now) {
                 self.seq += 1;
@@ -451,6 +512,7 @@ impl ClientSession {
             } => {
                 let mine = Some(source) == self.me;
                 self.events.push(ClientEvent::Hit {
+                    source,
                     target,
                     ability,
                     aura,
@@ -458,6 +520,34 @@ impl ClientSession {
                     crit,
                     mine,
                 });
+            }
+            ServerMsg::Swing {
+                source,
+                target,
+                amount,
+                crit,
+                heal,
+            } => {
+                let mine = Some(source) == self.me
+                    || self
+                        .entities
+                        .get(&source)
+                        .is_some_and(|e| e.owner.is_some() && e.owner == self.me);
+                self.events.push(ClientEvent::Swing {
+                    source,
+                    target,
+                    amount,
+                    crit,
+                    heal,
+                    mine,
+                });
+            }
+            ServerMsg::Died { entity, .. } => {
+                if Some(entity) == self.me {
+                    self.caster.cancel();
+                    self.queued = None;
+                }
+                self.events.push(ClientEvent::Died { entity });
             }
             ServerMsg::AuraApplied { .. } | ServerMsg::AuraRemoved { .. } => {}
             ServerMsg::Snapshot {
@@ -476,9 +566,14 @@ impl ClientSession {
                     if Some(s.id) == self.me {
                         self.caster.mana = s.mana;
                         self.caster.max_mana = s.max_mana;
+                        self.hp = s.hp;
+                        self.max_hp = s.max_hp;
                     }
                     let e = self.entities.entry(s.id).or_insert_with(|| RemoteEntity {
                         kind: s.kind,
+                        def: s.def,
+                        owner: s.owner,
+                        target: None,
                         buffer: VecDeque::new(),
                         hp: 0.0,
                         max_hp: 0.0,
@@ -491,6 +586,7 @@ impl ClientSession {
                     while e.buffer.len() > 16 {
                         e.buffer.pop_front();
                     }
+                    e.target = s.target;
                     e.hp = s.hp;
                     e.max_hp = s.max_hp;
                     e.mana = s.mana;

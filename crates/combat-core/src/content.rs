@@ -12,6 +12,19 @@ pub struct ContentPack {
     #[serde(default)]
     pub auras: Vec<AuraDef>,
     pub dummy: DummyDef,
+    #[serde(default)]
+    pub world: WorldDef,
+    /// Hostile NPC types. Placed in the world by `camps`.
+    #[serde(default)]
+    pub mobs: Vec<MobDef>,
+    #[serde(default)]
+    pub camps: Vec<CampDef>,
+    /// AI companion types a player can bring.
+    #[serde(default)]
+    pub pawns: Vec<PawnDef>,
+    /// Pawn ids every player gets on joining, until hiring exists.
+    #[serde(default)]
+    pub pawn_party: Vec<String>,
     /// FNV-1a of the source text, so client and server can detect a mismatch.
     #[serde(skip)]
     pub hash: u64,
@@ -26,6 +39,18 @@ pub struct ClassDef {
     pub spell_power: f32,
     pub crit_chance: f32,
     pub move_speed: f32,
+    /// Health per second, once out of combat for `OUT_OF_COMBAT_MS`.
+    #[serde(default = "default_hp_regen")]
+    pub hp_regen_per_sec: f32,
+    #[serde(default = "default_respawn")]
+    pub respawn_ms: u32,
+}
+
+fn default_hp_regen() -> f32 {
+    250.0
+}
+fn default_respawn() -> u32 {
+    5000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +155,93 @@ pub struct DummyDef {
     pub position: [f32; 3],
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldDef {
+    /// Where players appear on joining and after death.
+    pub spawn: [f32; 3],
+}
+
+impl Default for WorldDef {
+    fn default() -> Self {
+        Self {
+            spawn: [0.0, 0.0, 0.0],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MobDef {
+    pub id: String,
+    pub name: String,
+    pub max_hp: f32,
+    pub move_speed: f32,
+    pub attack_range: f32,
+    pub attack_ms: u32,
+    pub attack_damage: f32,
+    /// Notices players and pawns this close.
+    pub aggro_radius: f32,
+    /// Gives up and walks home past this distance from its spawn point.
+    pub leash_radius: f32,
+    pub respawn_ms: u32,
+    /// Visual size relative to a 1.8 m human. Purely cosmetic.
+    #[serde(default = "one")]
+    pub scale: f32,
+    #[serde(default = "default_mob_color")]
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CampDef {
+    pub mob: String,
+    pub position: [f32; 3],
+    #[serde(default = "one_u32")]
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PawnRole {
+    /// Closes to melee and holds the enemy's attention.
+    Melee,
+    /// Keeps its distance.
+    Ranged,
+    /// Heals the party, attacks when nobody needs it.
+    Healer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PawnDef {
+    pub id: String,
+    pub name: String,
+    pub role: PawnRole,
+    pub max_hp: f32,
+    pub move_speed: f32,
+    pub attack_range: f32,
+    pub attack_ms: u32,
+    pub attack_damage: f32,
+    #[serde(default)]
+    pub heal_amount: f32,
+    /// Threat per point of damage. Above 1 pulls enemies off the player.
+    #[serde(default = "one")]
+    pub threat_mult: f32,
+    pub respawn_ms: u32,
+    #[serde(default = "default_pawn_color")]
+    pub color: String,
+}
+
+fn one() -> f32 {
+    1.0
+}
+fn one_u32() -> u32 {
+    1
+}
+fn default_mob_color() -> String {
+    "#b04a3a".into()
+}
+fn default_pawn_color() -> String {
+    "#4ab06a".into()
+}
+
 impl ContentPack {
     pub fn from_yaml(text: &str) -> Result<Self, String> {
         let mut pack: ContentPack = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
@@ -160,6 +272,16 @@ impl ContentPack {
                 }
             }
         }
+        for c in &self.camps {
+            if self.mob_index(&c.mob).is_none() {
+                return Err(format!("camp at {:?}: unknown mob '{}'", c.position, c.mob));
+            }
+        }
+        for p in &self.pawn_party {
+            if self.pawn_index(p).is_none() {
+                return Err(format!("pawn_party: unknown pawn '{p}'"));
+            }
+        }
         for au in &self.auras {
             if au.tick_ms > 0 && au.duration_ms < au.tick_ms {
                 return Err(format!("{}: duration shorter than one tick", au.id));
@@ -173,6 +295,12 @@ impl ContentPack {
     }
     pub fn aura(&self, id: AuraId) -> Option<&AuraDef> {
         self.auras.get(id as usize)
+    }
+    pub fn mob_index(&self, id: &str) -> Option<u16> {
+        self.mobs.iter().position(|m| m.id == id).map(|i| i as u16)
+    }
+    pub fn pawn_index(&self, id: &str) -> Option<u16> {
+        self.pawns.iter().position(|p| p.id == id).map(|i| i as u16)
     }
     pub fn aura_index(&self, id: &str) -> Option<AuraId> {
         self.auras

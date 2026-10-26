@@ -5,7 +5,8 @@
 use std::net::ToSocketAddrs;
 
 use combat_core::ContentPack;
-use combat_core::protocol::EntityKind;
+use combat_core::movement::ARENA_HALF_EXTENT;
+use combat_core::protocol::{EntityKind, PawnCmd};
 use godot::prelude::*;
 use net_client::{ClientEvent, ClientSession};
 
@@ -106,7 +107,7 @@ impl CombatClient {
     #[func]
     fn set_target(&mut self, id: i64) {
         if let Some(s) = &mut self.session {
-            s.target = (id >= 0).then_some(id as u32);
+            s.set_target((id >= 0).then_some(id as u32));
         }
     }
 
@@ -116,6 +117,62 @@ impl CombatClient {
             .as_ref()
             .and_then(|s| s.target)
             .map_or(-1, |t| t as i64)
+    }
+
+    /// "attack": pawns attack our target now. "regroup": pawns come back.
+    #[func]
+    fn pawn_command(&mut self, cmd: GString) {
+        let cmd = match cmd.to_string().as_str() {
+            "attack" => PawnCmd::Attack,
+            "regroup" => PawnCmd::Regroup,
+            _ => return,
+        };
+        if let Some(s) = &mut self.session {
+            s.pawn_command(cmd);
+        }
+    }
+
+    /// Our health as (current, max), from the latest snapshot.
+    #[func]
+    fn hp(&self) -> Vector2 {
+        self.session
+            .as_ref()
+            .map_or(Vector2::ZERO, |s| Vector2::new(s.hp, s.max_hp))
+    }
+
+    #[func]
+    fn is_dead(&self) -> bool {
+        self.session.as_ref().is_some_and(|s| s.is_dead())
+    }
+
+    /// Half the side length of the square map, in metres.
+    #[func]
+    fn world_half_extent(&self) -> f32 {
+        ARENA_HALF_EXTENT
+    }
+
+    /// Static layout for the greybox level: {spawn, dummy, camps: [{pos, mob, count}]}.
+    #[func]
+    fn world_layout(&self) -> VarDictionary {
+        let Some(s) = &self.session else {
+            return VarDictionary::new();
+        };
+        let mut camps = VarArray::new();
+        for c in &s.pack.camps {
+            camps.push(
+                &dict(&[
+                    ("pos", v3(c.position).to_variant()),
+                    ("mob", c.mob.to_variant()),
+                    ("count", c.count.to_variant()),
+                ])
+                .to_variant(),
+            );
+        }
+        dict(&[
+            ("spawn", v3(s.pack.world.spawn).to_variant()),
+            ("dummy", v3(s.pack.dummy.position).to_variant()),
+            ("camps", camps.to_variant()),
+        ])
     }
 
     #[func]
@@ -169,6 +226,8 @@ impl CombatClient {
             ("cooldown_ms", a.cooldown_ms.to_variant()),
             ("mana_cost", a.mana_cost.to_variant()),
             ("range", a.range.to_variant()),
+            ("anim", a.anim.to_variant()),
+            ("vfx", a.vfx.to_variant()),
         ])
     }
 
@@ -250,17 +309,66 @@ impl CombatClient {
             let kind = match e.kind {
                 EntityKind::Player => "player",
                 EntityKind::Dummy => "dummy",
+                EntityKind::Mob => "mob",
+                EntityKind::Pawn => "pawn",
             };
-            let name = match e.kind {
-                EntityKind::Player => format!("Player {id}"),
-                EntityKind::Dummy => s.pack.dummy.name.clone(),
+            // (name, def id, colour, scale, attack range) from the content pack.
+            let (name, def_id, color, scale, reach) = match e.kind {
+                EntityKind::Player => (
+                    format!("Player {id}"),
+                    String::new(),
+                    "#3a8fff".to_string(),
+                    1.0,
+                    0.0,
+                ),
+                EntityKind::Dummy => (
+                    s.pack.dummy.name.clone(),
+                    "dummy".into(),
+                    "#8c6640".into(),
+                    1.0,
+                    0.0,
+                ),
+                EntityKind::Mob => s.pack.mobs.get(e.def as usize).map_or_else(
+                    || ("?".into(), String::new(), "#ff00ff".into(), 1.0, 0.0),
+                    |m| {
+                        (
+                            m.name.clone(),
+                            m.id.clone(),
+                            m.color.clone(),
+                            m.scale,
+                            m.attack_range,
+                        )
+                    },
+                ),
+                EntityKind::Pawn => s.pack.pawns.get(e.def as usize).map_or_else(
+                    || ("?".into(), String::new(), "#ff00ff".into(), 1.0, 0.0),
+                    |p| {
+                        (
+                            p.name.clone(),
+                            p.id.clone(),
+                            p.color.clone(),
+                            1.0,
+                            p.attack_range,
+                        )
+                    },
+                ),
             };
+            let mine = e.owner.is_some() && e.owner == s.me;
             out.push(
                 &dict(&[
                     ("id", (*id as i64).to_variant()),
                     ("kind", kind.to_variant()),
                     ("name", name.to_variant()),
                     ("is_me", (Some(*id) == s.me).to_variant()),
+                    ("def", def_id.to_variant()),
+                    ("color", color.to_variant()),
+                    ("scale", scale.to_variant()),
+                    ("reach", reach.to_variant()),
+                    ("owner", e.owner.map_or(-1, |o| o as i64).to_variant()),
+                    ("mine", mine.to_variant()),
+                    ("hostile", e.kind.hostile().to_variant()),
+                    ("dead", (e.hp <= 0.0).to_variant()),
+                    ("target", e.target.map_or(-1, |t| t as i64).to_variant()),
                     ("pos", v3(pos).to_variant()),
                     ("facing", facing.to_variant()),
                     ("hp", e.hp.to_variant()),
@@ -275,7 +383,8 @@ impl CombatClient {
         out
     }
 
-    /// Drains events since the last call: {type: "hit"|"error"|"log"|"confirmed", ...}.
+    /// Drains events since the last call:
+    /// {type: "hit"|"swing"|"died"|"error"|"log"|"confirmed", ...}.
     #[func]
     fn take_events(&mut self) -> VarArray {
         let mut out = VarArray::new();
@@ -285,6 +394,7 @@ impl CombatClient {
         for e in s.take_events() {
             let d = match e {
                 ClientEvent::Hit {
+                    source,
                     target,
                     ability,
                     aura,
@@ -299,6 +409,7 @@ impl CombatClient {
                     .unwrap_or_default();
                     dict(&[
                         ("type", "hit".to_variant()),
+                        ("source", (source as i64).to_variant()),
                         ("target", (target as i64).to_variant()),
                         ("name", name.to_variant()),
                         ("amount", amount.to_variant()),
@@ -307,6 +418,26 @@ impl CombatClient {
                         ("mine", mine.to_variant()),
                     ])
                 }
+                ClientEvent::Swing {
+                    source,
+                    target,
+                    amount,
+                    crit,
+                    heal,
+                    mine,
+                } => dict(&[
+                    ("type", "swing".to_variant()),
+                    ("source", (source as i64).to_variant()),
+                    ("target", (target as i64).to_variant()),
+                    ("amount", amount.to_variant()),
+                    ("crit", crit.to_variant()),
+                    ("heal", heal.to_variant()),
+                    ("mine", mine.to_variant()),
+                ]),
+                ClientEvent::Died { entity } => dict(&[
+                    ("type", "died".to_variant()),
+                    ("entity", (entity as i64).to_variant()),
+                ]),
                 ClientEvent::Error(m) => {
                     dict(&[("type", "error".to_variant()), ("text", m.to_variant())])
                 }

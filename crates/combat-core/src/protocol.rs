@@ -26,6 +26,22 @@ pub enum ClientMsg {
         move_seq: u32,
     },
     CancelCast,
+    /// Channel COMBAT. Pawns assist whatever their owner has targeted.
+    SetTarget {
+        target: Option<EntityId>,
+    },
+    /// Channel COMBAT.
+    PawnCommand {
+        cmd: PawnCmd,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PawnCmd {
+    /// Attack the owner's target now, even if nothing has pulled it.
+    Attack,
+    /// Break off and return to the owner for a few seconds.
+    Regroup,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +95,18 @@ pub enum ServerMsg {
         target: EntityId,
         aura: AuraId,
     },
+    /// An NPC's basic attack or heal (pawns and mobs have no cast bars).
+    Swing {
+        source: EntityId,
+        target: EntityId,
+        amount: f32,
+        crit: bool,
+        heal: bool,
+    },
+    Died {
+        entity: EntityId,
+        killer: Option<EntityId>,
+    },
     Correction {
         pos: [f32; 3],
     },
@@ -93,12 +121,27 @@ pub enum ServerMsg {
 pub enum EntityKind {
     Player,
     Dummy,
+    Mob,
+    Pawn,
+}
+
+impl EntityKind {
+    /// No PvP: only these can be attacked by players and pawns.
+    pub fn hostile(self) -> bool {
+        matches!(self, EntityKind::Dummy | EntityKind::Mob)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntitySnap {
     pub id: EntityId,
     pub kind: EntityKind,
+    /// Index into the pack's `mobs` or `pawns`, by kind. 0 otherwise.
+    pub def: u16,
+    /// The player a pawn belongs to.
+    pub owner: Option<EntityId>,
+    /// What this entity is attacking (or, for players, has selected).
+    pub target: Option<EntityId>,
     pub pos: [f32; 3],
     pub facing: f32,
     pub hp: f32,

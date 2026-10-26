@@ -5,8 +5,8 @@ use std::collections::VecDeque;
 
 use crate::Ms;
 
-/// Half-size of the flat test arena, in metres.
-pub const ARENA_HALF_EXTENT: f32 = 40.0;
+/// Half-size of the flat greybox map, in metres.
+pub const ARENA_HALF_EXTENT: f32 = 60.0;
 /// Speed may exceed the class speed by this factor over the window.
 pub const SPEED_TOLERANCE: f32 = 1.1;
 pub const CHECK_WINDOW_MS: Ms = 1000;
