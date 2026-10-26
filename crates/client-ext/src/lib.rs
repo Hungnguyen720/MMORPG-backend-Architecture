@@ -5,10 +5,11 @@
 use std::net::ToSocketAddrs;
 
 use combat_core::ContentPack;
+use combat_core::Delivery;
 use combat_core::movement::ARENA_HALF_EXTENT;
 use combat_core::protocol::{EntityKind, PawnCmd};
 use godot::prelude::*;
-use net_client::{ClientEvent, ClientSession};
+use net_client::{ClientEvent, ClientSession, MarkerKind};
 
 struct Phase0Extension;
 
@@ -94,6 +95,70 @@ impl CombatClient {
         {
             s.press(slot as u16);
         }
+    }
+
+    /// Press an aimed ability at a ground point (the cursor, or a drag on
+    /// mobile). Targeted abilities ignore the point.
+    #[func]
+    fn press_at(&mut self, slot: i32, aim: Vector3) {
+        if let Some(s) = &mut self.session
+            && slot >= 0
+            && (slot as usize) < s.pack.abilities.len()
+        {
+            s.press_at(slot as u16, Some([aim.x, aim.z]));
+        }
+    }
+
+    /// Skillshots in flight on our screen: [{pos, dir, color, mine}].
+    #[func]
+    fn shots(&self) -> VarArray {
+        let mut out = VarArray::new();
+        let Some(s) = &self.session else { return out };
+        for v in s.shots() {
+            let color = s
+                .pack
+                .ability(v.ability)
+                .map_or("#ffffff".to_string(), |a| a.color.clone());
+            out.push(
+                &dict(&[
+                    ("pos", Vector3::new(v.pos[0], 0.0, v.pos[1]).to_variant()),
+                    ("dir", Vector3::new(v.dir[0], 0.0, v.dir[1]).to_variant()),
+                    ("color", color.to_variant()),
+                    ("mine", v.mine.to_variant()),
+                ])
+                .to_variant(),
+            );
+        }
+        out
+    }
+
+    /// Circles on the ground: [{pos, radius, kind ("mine"|"ally"|"danger"),
+    /// progress 0..1 until it lands, landed}].
+    #[func]
+    fn markers(&self) -> VarArray {
+        let mut out = VarArray::new();
+        let Some(s) = &self.session else { return out };
+        let now = s.now();
+        for m in s.markers() {
+            let span = m.lands_at.saturating_sub(m.placed_at).max(1) as f32;
+            let progress = (now.saturating_sub(m.placed_at) as f32 / span).min(1.0);
+            let kind = match m.kind {
+                MarkerKind::Mine => "mine",
+                MarkerKind::Ally => "ally",
+                MarkerKind::Danger => "danger",
+            };
+            out.push(
+                &dict(&[
+                    ("pos", Vector3::new(m.pos[0], 0.0, m.pos[1]).to_variant()),
+                    ("radius", m.radius.to_variant()),
+                    ("kind", kind.to_variant()),
+                    ("progress", progress.to_variant()),
+                    ("landed", (now >= m.lands_at).to_variant()),
+                ])
+                .to_variant(),
+            );
+        }
+        out
     }
 
     #[func]
@@ -228,6 +293,19 @@ impl CombatClient {
             ("range", a.range.to_variant()),
             ("anim", a.anim.to_variant()),
             ("vfx", a.vfx.to_variant()),
+            (
+                "delivery",
+                match a.delivery {
+                    Delivery::Target => "target",
+                    Delivery::Skillshot => "skillshot",
+                    Delivery::Ground => "ground",
+                    Delivery::Dash => "dash",
+                }
+                .to_variant(),
+            ),
+            ("radius", a.radius.to_variant()),
+            ("width", a.width.to_variant()),
+            ("dash_m", a.dash_m.to_variant()),
         ])
     }
 
@@ -407,8 +485,11 @@ impl CombatClient {
                         None => s.pack.ability(ability).map(|a| a.name.clone()),
                     }
                     .unwrap_or_default();
+                    let aimed = aura.is_none()
+                        && s.pack.ability(ability).is_some_and(|a| a.delivery.aimed());
                     dict(&[
                         ("type", "hit".to_variant()),
+                        ("aimed", aimed.to_variant()),
                         ("source", (source as i64).to_variant()),
                         ("target", (target as i64).to_variant()),
                         ("name", name.to_variant()),
@@ -444,6 +525,17 @@ impl CombatClient {
                 ClientEvent::Log(m) => {
                     dict(&[("type", "log".to_variant()), ("text", m.to_variant())])
                 }
+                ClientEvent::Dash { dir, distance } => dict(&[
+                    ("type", "dash".to_variant()),
+                    ("dir", Vector3::new(dir[0], 0.0, dir[1]).to_variant()),
+                    ("distance", distance.to_variant()),
+                ]),
+                ClientEvent::ShotResolved { predicted, server } => dict(&[
+                    ("type", "shot_resolved".to_variant()),
+                    ("predicted", predicted.map_or(-1, |e| e as i64).to_variant()),
+                    ("server", server.map_or(-1, |e| e as i64).to_variant()),
+                    ("agree", (predicted == server).to_variant()),
+                ]),
                 ClientEvent::Confirmed {
                     seq,
                     ability,
@@ -471,7 +563,7 @@ impl CombatClient {
         out
     }
 
-    /// {rtt_ms, loss, last_queue_gap_ms (-1 if none)}
+    /// {rtt_ms, loss, last_queue_gap_ms (-1 if none), shots_agreed, shots_judged}
     #[func]
     fn net_stats(&self) -> VarDictionary {
         let Some(s) = &self.session else {
@@ -486,6 +578,8 @@ impl CombatClient {
                     .map_or(-1.0, |g| g as f64 / 1000.0)
                     .to_variant(),
             ),
+            ("shots_agreed", s.shot_agreement.0.to_variant()),
+            ("shots_judged", s.shot_agreement.1.to_variant()),
         ])
     }
 

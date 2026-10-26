@@ -11,14 +11,21 @@ extends Node3D
 ##   scripts/unit_view.gd      one character: greybox body or real model
 ##   scripts/visuals.gd        which model replaces which greybox
 ##   scripts/hud.gd            frames, bars, nameplates, log, debug panel
+##   scripts/combat_fx.gd      skillshots, ground runes and mob telegraphs
+##
+## Aimed abilities (skillshots, ground runes, the dodge) quick-cast at the
+## mouse cursor: press the key and it fires where you point. With nothing
+## under the cursor they fall back to your target. Space dodges toward where
+## you are walking, or toward the cursor when standing still.
 ##
 ## Command-line options (after `--`):
 ##   --server HOST:PORT   default 127.0.0.1:5000
 ##   --latency MS         initial fake latency (RTT), default 0
 ##   --loss PERCENT       initial fake loss, default 0
 ##   --autotest [MODE]    play by itself, print a summary, quit. MODE is
-##                        "dummy" (default: cast at the dummy for 8 s) or
-##                        "pawns" (walk to a ghoul camp, fight it with pawns)
+##                        "dummy" (default: cast at the dummy for 8 s),
+##                        "pawns" (walk to a ghoul camp, fight it with pawns) or
+##                        "aimed" (skillshots, runes and dodges at the dummy)
 ##   --screenshot PATH    with --autotest, save a PNG of the window
 ##   --shot-at SECONDS    when to take it (default 1 for dummy, 14 for pawns)
 
@@ -26,6 +33,9 @@ const CONTENT_PATH := "res://content/abilities.yaml"
 const TAB_RANGE := 45.0
 const CLICK_PICK_PX := 48.0
 const ARRIVE_DIST := 0.4
+const DASH_SECONDS := 0.18
+## After an aimed press, keep facing the aim point this long.
+const AIM_FACE_SECONDS := 0.5
 
 var client: CombatClient
 var server_host := "127.0.0.1"
@@ -42,6 +52,13 @@ var player_view: UnitView
 var target_ring: MeshInstance3D
 var target_ring_mat: StandardMaterial3D
 var move_marker: MeshInstance3D
+var fx: CombatFx
+var abilities: Array = []   # ability_info per slot
+var dodge_slot := -1
+var dash_vel := Vector3.ZERO
+var dash_left := 0.0
+var aim_face = null         # Vector3 we turned to for an aimed cast, or null
+var aim_face_left := 0.0
 var views := {}          # entity id -> UnitView (everyone but us)
 var entities: Array = [] # this frame's snapshot from CombatClient
 var by_id := {}
@@ -61,7 +78,8 @@ var auto_slot := 0
 var auto_stage := 0
 var auto_mob := -1
 var stats := {"my_hits": 0, "pawn_swings": 0, "pawn_heals": 0, "mob_swings_at_party": 0,
-	"kills": 0, "players_seen": 0, "queued": 0, "max_gap": 0.0}
+	"kills": 0, "players_seen": 0, "queued": 0, "max_gap": 0.0,
+	"shots_judged": 0, "shots_agreed": 0, "dashes": 0}
 var auto_errors: Array[String] = []
 
 
@@ -116,6 +134,10 @@ func _ready() -> void:
 		client = null
 		return
 	half_extent = client.world_half_extent()
+	for n in client.ability_count():
+		abilities.append(client.ability_info(n))
+		if abilities[n].delivery == "dash":
+			dodge_slot = n
 	_build_world()
 	hud.build_action_bar(client)
 	hud.set_fake_lag(initial_latency, initial_loss)
@@ -133,6 +155,7 @@ func _setup_input_map() -> void:
 		"move_left": [KEY_A, KEY_LEFT], "move_right": [KEY_D, KEY_RIGHT],
 		"target_next": [KEY_TAB], "clear_target": [KEY_ESCAPE],
 		"pawn_attack": [KEY_F], "pawn_regroup": [KEY_G],
+		"dodge": [KEY_SPACE],
 	}
 	for n in 9:
 		keys["slot_%d" % (n + 1)] = [KEY_1 + n]
@@ -187,6 +210,8 @@ func _build_world() -> void:
 	move_marker.material_override = _unshaded(Color(0.6, 1, 0.6))
 	move_marker.visible = false
 	add_child(move_marker)
+	fx = CombatFx.new()
+	add_child(fx)
 	world_built = true
 
 
@@ -216,6 +241,7 @@ func _process(delta: float) -> void:
 	_move_player(delta, dead)
 	_sync_entities()
 	_handle_events()
+	fx.update(client)
 	hud.update(client, camera, player.position, views, entities, "%s:%d" % [server_host, server_port])
 
 	if autotest != "":
@@ -226,8 +252,19 @@ func _move_player(delta: float, dead: bool) -> void:
 	var dir := Vector3.ZERO
 	if not dead:
 		dir = _move_input()
-	var moving := dir != Vector3.ZERO
-	if moving:
+	var dashing := dash_left > 0.0 and not dead
+	var moving := dir != Vector3.ZERO or dashing
+	aim_face_left -= delta
+	if dashing:
+		dash_left -= delta
+		dir = dash_vel.normalized()
+		player.velocity = dash_vel
+		player.move_and_slide()
+		player.position.y = 0
+		player.position.x = clamp(player.position.x, -half_extent + 1, half_extent - 1)
+		player.position.z = clamp(player.position.z, -half_extent + 1, half_extent - 1)
+		facing = atan2(dir.x, dir.z)
+	elif moving:
 		player.velocity = dir * move_speed
 		player.move_and_slide()
 		player.position.y = 0
@@ -235,8 +272,9 @@ func _move_player(delta: float, dead: bool) -> void:
 		player.position.z = clamp(player.position.z, -half_extent + 1, half_extent - 1)
 		facing = atan2(dir.x, dir.z)
 	elif not dead:
-		# Standing still: face the target, like a tab-target caster does.
-		var t = _entity_pos(client.get_target())
+		# Standing still: face what we just aimed at, else the target, like
+		# a tab-target caster does.
+		var t = aim_face if aim_face != null and aim_face_left > 0.0 else _entity_pos(client.get_target())
 		if t != null:
 			var to: Vector3 = t - player.position
 			if to.length() > 0.1:
@@ -279,6 +317,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.is_action_pressed("slot_%d" % (n + 1)) and n < client.ability_count():
 			_press(n)
 			return
+	if event.is_action_pressed("dodge") and dodge_slot >= 0:
+		_press(dodge_slot)
+		return
 	if event.is_action_pressed("target_next"):
 		_cycle_target()
 	elif event.is_action_pressed("clear_target"):
@@ -299,11 +340,47 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _press(slot: int) -> void:
 	var was_ready := client.swipe(slot) == 0.0
-	client.press(slot)
+	var aim = _aim_for(slot)
+	if aim == null:
+		client.press(slot)
+	else:
+		client.press_at(slot, aim)
+		if abilities[slot].delivery != "dash":
+			aim_face = aim
+			aim_face_left = AIM_FACE_SECONDS
 	hud.flash_slot(slot)
 	# Instants have no bar: play a release so the press reads on the body.
 	if was_ready and client.swipe(slot) > 0.0 and not client.cast_bar().active:
 		player_view.play_action("attack")
+
+
+## Ground point for an aimed ability, or null to let it fire at the target.
+## Skillshots and runes go to the cursor (quick cast). The dodge goes where
+## we are walking, else toward the cursor.
+func _aim_for(slot: int):
+	var delivery: String = abilities[slot].delivery
+	if delivery == "target":
+		return null
+	var cursor = null
+	if autotest == "":
+		cursor = camera.ground_point(get_viewport().get_mouse_position())
+	if delivery == "dash":
+		var walk := _move_input()
+		if walk == Vector3.ZERO and cursor != null:
+			walk = (cursor - player.position)
+			walk.y = 0
+		if walk.length() < 0.01:
+			return null
+		return player.position + walk.normalized() * float(abilities[slot].dash_m)
+	return cursor
+
+
+func _start_dash(dir: Vector3, distance: float) -> void:
+	dash_vel = dir.normalized() * distance / DASH_SECONDS
+	dash_left = DASH_SECONDS
+	move_goal = null
+	player_view.play_action("attack")
+	stats.dashes += 1
 
 
 func _pawn_command(cmd: String) -> void:
@@ -412,7 +489,7 @@ func _handle_events() -> void:
 				_floating_text(ev.target, Hud.num(ev.amount) + ("!" if ev.crit else ""), ev.crit,
 					Color(1, 0.6, 0.3) if ev.periodic else Color.WHITE, 60 if ev.periodic else 80)
 				_hit_reaction(ev.target)
-				if not ev.periodic:
+				if not ev.periodic and not ev.aimed:
 					_bolt(ev.source, ev.target, Color(0.7, 0.85, 1.0))
 				if ev.mine:
 					var verb := "ticks" if ev.periodic else "hits"
@@ -434,6 +511,12 @@ func _handle_events() -> void:
 				auto_errors.append(ev.text)
 			"log":
 				hud.log_line("[color=#9aa4b2]" + ev.text + "[/color]")
+			"dash":
+				_start_dash(ev.dir, ev.distance)
+			"shot_resolved":
+				stats.shots_judged += 1
+				if ev.agree:
+					stats.shots_agreed += 1
 			"confirmed":
 				if ev.queue_gap_ms >= 0:
 					stats.queued += 1
@@ -581,6 +664,8 @@ func _run_autotest(delta: float) -> void:
 		"idle":
 			if auto_elapsed > 10.0:
 				_finish(stats.players_seen > 0)
+		"aimed":
+			_autotest_aimed()
 		_:
 			_autotest_dummy()
 
@@ -595,6 +680,28 @@ func _autotest_dummy() -> void:
 	_auto_rotation()
 	if auto_elapsed > 9.0:
 		_finish(stats.my_hits > 0)
+
+
+## Skillshots, runes and dodges at the walking dummy through the soft-target
+## fallback (there is no mouse in a headless run).
+func _autotest_aimed() -> void:
+	camera.distance = IsoCamera.MAX_DIST  # keep the dummy's circle in the screenshot
+	if client.get_target() < 0:
+		for e in entities:
+			if e.kind == "dummy":
+				client.set_target(e.id)
+		auto_next_press = auto_elapsed + 0.2
+		return
+	if auto_elapsed >= auto_next_press:
+		var order := ["glacial_spike", "flame_rune", "glacial_spike", "blink_step"]
+		var want: String = order[auto_slot % order.size()]
+		for n in abilities.size():
+			if abilities[n].id == want:
+				_press(n)
+		auto_slot += 1
+		auto_next_press = auto_elapsed + 0.8
+	if auto_elapsed > 12.0:
+		_finish(stats.my_hits > 0 and stats.shots_judged > 0 and stats.dashes > 0)
 
 
 ## Walk to the nearest ghoul camp, stop at casting range, pull with the

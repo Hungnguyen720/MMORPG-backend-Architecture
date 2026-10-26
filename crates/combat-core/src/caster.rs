@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn pack_loads() {
         let p = ContentPack::from_yaml(PACK).unwrap();
-        assert_eq!(p.abilities.len(), 5);
+        assert_eq!(p.abilities.len(), 8);
     }
 
     #[test]

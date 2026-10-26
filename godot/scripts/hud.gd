@@ -109,7 +109,8 @@ func update(client: CombatClient, camera: Camera3D, me_pos: Vector3, views: Dict
 	var st := client.net_stats()
 	if not st.is_empty():
 		var gap := "-" if st.last_queue_gap_ms < 0 else "%.2f ms" % st.last_queue_gap_ms
-		stats_label.text = "RTT %d ms   loss %.1f%%\nlast spell-queue gap %s" % [st.rtt_ms, st.loss * 100.0, gap]
+		var shots := "-" if st.shots_judged == 0 else "%d / %d" % [st.shots_agreed, st.shots_judged]
+		stats_label.text = "RTT %d ms   loss %.1f%%\nlast spell-queue gap %s\nskillshots matching server %s" % [st.rtt_ms, st.loss * 100.0, gap, shots]
 
 	error_time -= delta
 	error_label.modulate.a = clamp(error_time, 0.0, 1.0)
@@ -389,7 +390,8 @@ func _build_misc() -> void:
 	dv.add_child(stats_label)
 	var help := label(
 		"WASD / hold right-click: move    Tab / left-click: target\n" +
-		"1-5: cast    F: pawns attack    G: pawns regroup\n" +
+		"1-5: cast at target    6-7: aim at cursor    Space: dodge\n" +
+		"F: pawns attack    G: pawns regroup\n" +
 		"Esc: clear target    Wheel: zoom", 12)
 	help.modulate = Color(0.7, 0.75, 0.8)
 	dv.add_child(help)
@@ -412,7 +414,8 @@ func build_action_bar(client: CombatClient) -> void:
 	root.add_child(bar_box)
 	for i in n:
 		var info := client.ability_info(i)
-		var s := _slot(bar_box, info.name, str(i + 1), Color(info.color), _describe(info))
+		var key := "Space" if info.delivery == "dash" else str(i + 1)
+		var s := _slot(bar_box, info.name, key, Color(info.color), _describe(info))
 		slots.append(s)
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(16, 0)
@@ -461,7 +464,9 @@ func _describe(info: Dictionary) -> String:
 		t = "%.1fs channel" % (info.channel_ms / 1000.0)
 	var gcd := "off GCD" if info.gcd_ms == 0 else "GCD"
 	var cd := "" if info.cooldown_ms == 0 else ", %ds cooldown" % (info.cooldown_ms / 1000)
-	return "%s\n%s, %s%s, %d mana, %d m" % [info.name, t, gcd, cd, info.mana_cost, info.range]
+	var aim: String = {"skillshot": "\nSkillshot: fires at the cursor", "ground": "\nGround: lands at the cursor",
+		"dash": "\nDodge: toward where you walk"}.get(info.delivery, "")
+	return "%s\n%s, %s%s, %d mana, %d m%s" % [info.name, t, gcd, cd, info.mana_cost, info.range, aim]
 
 
 # --------------------------------------------------------------------------
