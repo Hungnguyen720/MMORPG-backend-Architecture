@@ -78,6 +78,60 @@ abilities:
     effects:
       - damage: { school: arcane, base: 800, coeff_spellpower: 0.8 }
 
+  # --- Aimed abilities (Phase 0.5). Quick cast at the cursor on PC; with no
+  # aim they fire at your target, so tapping still works on mobile.
+
+  # Key 6. Skillshot: a short wind-up, then a bolt that hits the first enemy
+  # in its path. Hits harder than Ice Shard because it can miss.
+  - id: glacial_spike
+    name: Glacial Spike
+    delivery: skillshot
+    cast_ms: 250            # wind-up; you can keep moving
+    cast_while_moving: true
+    gcd_ms: 1500
+    mana_cost: 18
+    range: 28
+    speed: 30               # m/s
+    width: 1.0              # m
+    color: "#7fd8ff"
+    anim: cast_1h
+    vfx: glacial_spike
+    effects:
+      - damage: { school: frost, base: 1100, coeff_spellpower: 1.1 }
+
+  # Key 7. Ground: a rune that erupts under everything in the circle.
+  - id: flame_rune
+    name: Flame Rune
+    delivery: ground
+    gcd_ms: 1500
+    cooldown_ms: 6000
+    mana_cost: 25
+    range: 25
+    radius: 4.0
+    delay_ms: 900
+    max_targets: 8
+    cast_while_moving: true
+    color: "#ff6a2a"
+    anim: cast_1h
+    vfx: flame_rune
+    effects:
+      - damage: { school: fire, base: 700, coeff_spellpower: 0.7 }
+
+  # Key 8 or Space. Dodge: a quick hop toward where you are moving (or the
+  # cursor). Off the GCD so it can always answer a telegraph.
+  - id: blink_step
+    name: Blink Step
+    delivery: dash
+    gcd_ms: 0
+    cooldown_ms: 4000
+    range: 6
+    dash_m: 6.0
+    cast_while_moving: true
+    color: "#d0e8ff"
+    anim: dodge
+    vfx: blink
+    effects: []
+
 auras:
   - id: searing_brand
     name: Searing Brand
@@ -91,6 +145,8 @@ dummy:
   max_hp: 250000
   reset_after_ms: 10000
   position: [0.0, 0.0, -10.0]
+  patrol_radius: 5.0        # walks a circle so skillshots have to lead it
+  patrol_speed: 3.0
 
 # ---------------------------------------------------------------------------
 # Greybox world. The map is 120 x 120 m (movement::ARENA_HALF_EXTENT = 60).
@@ -125,6 +181,11 @@ mobs:
     respawn_ms: 40000
     scale: 1.45
     color: "#5d6b3f"
+    slam:                  # red circle on the ground, then it lands: step out
+      radius: 4.0
+      windup_ms: 1200
+      cooldown_ms: 8000
+      damage: 1400
 
   - id: bone_archer
     name: Bone Archer

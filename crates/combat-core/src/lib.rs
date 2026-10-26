@@ -5,6 +5,7 @@
 pub mod caster;
 pub mod content;
 pub mod movement;
+pub mod projectile;
 pub mod protocol;
 
 /// Milliseconds on whichever clock the caller owns (server clock on the
@@ -25,7 +26,7 @@ pub const RANGE_LEEWAY: f32 = 2.0;
 /// Health regeneration starts this long after the last damage taken.
 pub const OUT_OF_COMBAT_MS: Ms = 6000;
 
-pub const PROTOCOL_ID: u64 = 0x5048_4153_4530_0002; // "PHASE0" v2: mobs and pawns
+pub const PROTOCOL_ID: u64 = 0x5048_4153_4530_0003; // "PHASE0" v3: aimed abilities
 pub const DEFAULT_PORT: u16 = 5000;
 
 /// Channel ids, matching the architecture doc.
@@ -37,7 +38,9 @@ pub mod channel {
 }
 
 pub use caster::{ActiveCast, CastCtx, CasterState, FailReason, Started};
-pub use content::{AbilityDef, AuraDef, ContentPack, Effect, MobDef, PawnDef, PawnRole};
+pub use content::{
+    AbilityDef, AuraDef, ContentPack, Delivery, Effect, MobDef, PawnDef, PawnRole, SlamDef,
+};
 
 /// renet channel layout shared by both ends. Combat resends fast: a lost
 /// cast request should cost one short resend, not a 300 ms default timeout.

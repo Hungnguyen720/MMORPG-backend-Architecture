@@ -5,13 +5,17 @@
 //! that follow each player. NPC brains run on a fixed 20 Hz AI tick; player
 //! casts, channels and auras still fire the moment they fall due.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use combat_core::movement::{ARENA_HALF_EXTENT, MoveValidator, dist_xz};
+use combat_core::projectile::{
+    self, BODY_RADIUS, Flight, INTERP_DELAY_MS, MAX_DODGE_GRACE_MS, MAX_REWIND_MS,
+    SERVER_HIT_LEEWAY, xz,
+};
 use combat_core::protocol::{ClientMsg, EntityKind, EntitySnap, PawnCmd, ServerMsg, StopReason};
 use combat_core::{
-    AbilityId, AuraId, CastCtx, CasterState, ContentPack, Effect, EntityId, FailReason, Ms,
-    OUT_OF_COMBAT_MS, PawnRole, Started, channel,
+    AbilityId, AuraId, CastCtx, CasterState, ContentPack, Delivery, Effect, EntityId, FailReason,
+    Ms, OUT_OF_COMBAT_MS, PawnRole, Started, channel,
 };
 use renet::ClientId;
 
@@ -33,6 +37,10 @@ const PERSONAL_SPACE: f32 = 0.9;
 const NPC_CRIT_CHANCE: f32 = 0.05;
 /// Players and pawns start at entity ids above every mob.
 const FIRST_DYNAMIC_ENTITY: EntityId = 1000;
+/// Skillshots are swept in steps this long; the hit lands at the step's end.
+const SHOT_STEP_MS: Ms = 20;
+/// Hostile positions kept for rewinding aimed hits (one per AI tick).
+const TRAIL_LEN: usize = 12;
 
 struct Queued {
     seq: u32,
@@ -40,6 +48,41 @@ struct Queued {
     target: EntityId,
     move_seq: u32,
     received_at: Ms,
+    /// Ground point for aimed abilities, as the client sent it.
+    aim: Option<[f32; 2]>,
+}
+
+/// A skillshot in flight on the server.
+struct Shot {
+    id: u32,
+    client: ClientId,
+    ability: AbilityId,
+    flight: Flight,
+    /// Hostiles are tested where they were this long ago: where the shooter
+    /// saw them.
+    rewind_ms: Ms,
+    swept_to: Ms,
+}
+
+/// A player's ground ability waiting to land.
+struct Blast {
+    client: ClientId,
+    ability: AbilityId,
+    pos: [f32; 2],
+    lands_at: Ms,
+    rewind_ms: Ms,
+}
+
+/// A mob's telegraphed attack waiting to land.
+struct Slam {
+    source: EntityId,
+    pos: [f32; 2],
+    radius: f32,
+    damage: f32,
+    lands_at: Ms,
+    pawns_done: bool,
+    /// Players already resolved (each one gets their own latency grace).
+    players_done: Vec<EntityId>,
 }
 
 struct Player {
@@ -61,6 +104,10 @@ struct Player {
     respawn_at: Option<Ms>,
     target: Option<EntityId>,
     pawns: Vec<EntityId>,
+    /// Resolved aim of the cast in progress, if it is an aimed ability.
+    cast_aim: Option<[f32; 2]>,
+    /// How much earlier than its bar the current cast ends on the server.
+    cast_allowance: Ms,
 }
 
 struct AuraInstance {
@@ -107,6 +154,11 @@ struct Npc {
     /// Set while dead: when it died.
     died_at: Option<Ms>,
     brain: Brain,
+    /// Recent (time, position), newest last, for rewinding aimed hits.
+    trail: VecDeque<(Ms, [f32; 3])>,
+    /// Mobs with a slam: when it may next be used, and the wind-up end.
+    next_slam: Ms,
+    winding_until: Ms,
 }
 
 impl Npc {
@@ -119,6 +171,46 @@ impl Npc {
             Some(entry) => entry.1 += amount,
             None => self.threat.push((source, amount)),
         }
+    }
+
+    /// Where this NPC stood at time `t`, from its trail.
+    fn pos_at(&self, t: Ms) -> [f32; 3] {
+        let Some(&(last_t, last)) = self.trail.back() else {
+            return self.pos;
+        };
+        if t >= last_t {
+            return last;
+        }
+        let mut prev = self.trail[0];
+        if t <= prev.0 {
+            return prev.1;
+        }
+        for &(bt, bp) in self.trail.iter().skip(1) {
+            if t <= bt {
+                let k = (t - prev.0) as f32 / (bt - prev.0).max(1) as f32;
+                let (a, b) = (prev.1, bp);
+                return [
+                    a[0] + (b[0] - a[0]) * k,
+                    a[1] + (b[1] - a[1]) * k,
+                    a[2] + (b[2] - a[2]) * k,
+                ];
+            }
+            prev = (bt, bp);
+        }
+        last
+    }
+
+    fn radius(&self, pack: &ContentPack) -> f32 {
+        let scale = match self.kind {
+            EntityKind::Mob => pack.mobs[self.def as usize].scale,
+            _ => 1.0,
+        };
+        BODY_RADIUS * scale
+    }
+
+    /// The radius player abilities are judged against on the server.
+    fn hit_radius(&self, pack: &ContentPack) -> f32 {
+        self.radius(pack) + SERVER_HIT_LEEWAY
     }
 
     fn top_threat(&self) -> Option<EntityId> {
@@ -156,6 +248,8 @@ enum Action {
     None,
     Attack(EntityId),
     Heal(EntityId),
+    /// Start a telegraphed slam centred here.
+    Slam([f32; 2]),
 }
 
 pub struct Zone {
@@ -165,6 +259,10 @@ pub struct Zone {
     next_entity: EntityId,
     next_ai: Ms,
     outbox: Vec<(Dest, u8, ServerMsg)>,
+    shots: Vec<Shot>,
+    blasts: Vec<Blast>,
+    slams: Vec<Slam>,
+    next_shot_id: u32,
     rng: u64,
     stats: QueueStats,
     last_stats_print: Ms,
@@ -190,6 +288,9 @@ impl Zone {
                 target: None,
                 next_attack: 0,
                 died_at: None,
+                trail: VecDeque::new(),
+                next_slam: 0,
+                winding_until: 0,
                 brain: Brain::Dummy,
             },
         );
@@ -222,6 +323,9 @@ impl Zone {
                         target: None,
                         next_attack: 0,
                         died_at: None,
+                        trail: VecDeque::new(),
+                        next_slam: 0,
+                        winding_until: 0,
                         brain: Brain::Mob {
                             home,
                             camp,
@@ -249,6 +353,10 @@ impl Zone {
             next_entity: FIRST_DYNAMIC_ENTITY,
             next_ai: 0,
             outbox: Vec::new(),
+            shots: Vec::new(),
+            blasts: Vec::new(),
+            slams: Vec::new(),
+            next_shot_id: 1,
             rng: 0x9E37_79B9_7F4A_7C15,
             stats: QueueStats::default(),
             last_stats_print: 0,
@@ -289,6 +397,8 @@ impl Zone {
             respawn_at: None,
             target: None,
             pawns: Vec::new(),
+            cast_aim: None,
+            cast_allowance: 0,
         };
         let party: Vec<u16> = self
             .pack
@@ -316,6 +426,9 @@ impl Zone {
                     target: None,
                     next_attack: 0,
                     died_at: None,
+                    trail: VecDeque::new(),
+                    next_slam: 0,
+                    winding_until: 0,
                     brain: Brain::Pawn {
                         owner: entity,
                         slot,
@@ -435,6 +548,7 @@ impl Zone {
                 target,
                 queued,
                 move_seq,
+                aim,
             } => {
                 let Some(def) = self.pack.ability(ability) else {
                     self.send(
@@ -476,6 +590,7 @@ impl Zone {
                             target,
                             move_seq,
                             received_at: now,
+                            aim,
                         });
                     } else {
                         let reason = p
@@ -495,6 +610,7 @@ impl Zone {
                         target,
                         move_seq,
                         received_at: now,
+                        aim,
                     },
                     now,
                     None,
@@ -566,19 +682,37 @@ impl Zone {
         queued_ready: Option<Ms>,
         now_us: u64,
     ) {
-        let friendly = self.npcs.get(&q.target).is_some_and(|n| !n.kind.hostile())
-            || self.player_by_entity(q.target).is_some();
-        if friendly {
-            self.send(
-                Dest::One(client_id),
-                ServerMsg::CastFailed {
-                    seq: q.seq,
-                    reason: FailReason::InvalidTarget,
-                },
-            );
-            return;
+        let aimed = self.pack.abilities[q.ability as usize].delivery.aimed();
+        let mut aim = None;
+        if aimed {
+            match self.resolve_aim(client_id, &q) {
+                Ok(a) => aim = Some(a),
+                Err(reason) => {
+                    self.send(
+                        Dest::One(client_id),
+                        ServerMsg::CastFailed { seq: q.seq, reason },
+                    );
+                    return;
+                }
+            }
+        } else {
+            let friendly = self.npcs.get(&q.target).is_some_and(|n| !n.kind.hostile())
+                || self.player_by_entity(q.target).is_some();
+            if friendly {
+                self.send(
+                    Dest::One(client_id),
+                    ServerMsg::CastFailed {
+                        seq: q.seq,
+                        reason: FailReason::InvalidTarget,
+                    },
+                );
+                return;
+            }
         }
-        let dist = {
+        // Aimed abilities were clamped to their range above.
+        let dist = if aimed {
+            Some(0.0)
+        } else {
             let p = &self.players[&client_id];
             self.hostile_pos(q.target).map(|tp| dist_xz(p.pos, tp))
         };
@@ -596,6 +730,12 @@ impl Zone {
             .caster
             .start(q.ability, def, q.seq, q.target, t, allowance);
         p.cast_move_seq = p.cast_move_seq.max(q.move_seq);
+        p.cast_aim = aim;
+        p.cast_allowance = p
+            .caster
+            .cast
+            .as_ref()
+            .map_or(0, |c| c.bar_ms - (c.ends_at - c.started_at));
         let caster = p.entity;
         let queue_gap_us = queued_ready.map(|ready| now_us.saturating_sub(ready * 1000) as u32);
         if let Some(gap) = queue_gap_us {
@@ -627,7 +767,271 @@ impl Zone {
             },
         );
         if started == Started::Instant {
-            self.resolve(client_id, q.ability, q.target, t);
+            match aim {
+                Some(aim) => self.launch(client_id, q.ability, q.seq, aim, t, 0),
+                None => self.resolve(client_id, q.ability, q.target, t),
+            }
+        }
+    }
+
+    /// Where an aimed ability goes: the client's aim point, else the target
+    /// (soft targeting, so a tap still works), clamped to range.
+    fn resolve_aim(&self, client_id: ClientId, q: &Queued) -> Result<[f32; 2], FailReason> {
+        let p = &self.players[&client_id];
+        let def = &self.pack.abilities[q.ability as usize];
+        let from = xz(p.pos);
+        let wanted = q
+            .aim
+            .filter(|a| a.iter().all(|v| v.is_finite()))
+            .or_else(|| self.hostile_pos(q.target).map(xz));
+        Ok(match def.delivery {
+            Delivery::Target => unreachable!("only aimed abilities have an aim"),
+            // A skillshot only needs a direction; with nothing to aim at it
+            // flies along the caster's facing.
+            Delivery::Skillshot => wanted.unwrap_or(from),
+            Delivery::Ground => {
+                projectile::clamp_aim(from, wanted.ok_or(FailReason::NoTarget)?, def.range)
+            }
+            Delivery::Dash => {
+                let dir = projectile::direction(from, wanted.unwrap_or(from), p.facing);
+                [from[0] + dir[0] * def.dash_m, from[1] + dir[1] * def.dash_m]
+            }
+        })
+    }
+
+    /// An aimed ability leaves its caster at time `t`. `allowance` is how much
+    /// earlier than the player's bar the server finished the wind-up.
+    fn launch(
+        &mut self,
+        client_id: ClientId,
+        ability: AbilityId,
+        seq: u32,
+        aim: [f32; 2],
+        t: Ms,
+        allowance: Ms,
+    ) {
+        let def = &self.pack.abilities[ability as usize];
+        let p = self.players.get_mut(&client_id).unwrap();
+        let origin = xz(p.pos);
+        // The shooter saw hostiles INTERP_DELAY_MS plus network delay ago:
+        // one way for the snapshot, plus one way for the request unless the
+        // wind-up already made up for it.
+        let rewind_ms = (INTERP_DELAY_MS + p.rtt_ms.saturating_sub(allowance)).min(MAX_REWIND_MS);
+        let caster = p.entity;
+        match def.delivery {
+            Delivery::Target => {}
+            Delivery::Dash => p.validator.grant(t, def.dash_m),
+            Delivery::Skillshot => {
+                let flight = Flight::new(origin, aim, p.facing, def.speed, def.range, def.width, t);
+                let id = self.next_shot_id;
+                self.next_shot_id += 1;
+                self.shots.push(Shot {
+                    id,
+                    client: client_id,
+                    ability,
+                    flight,
+                    rewind_ms,
+                    swept_to: t,
+                });
+                self.send(
+                    Dest::All,
+                    ServerMsg::ProjectileSpawn {
+                        id,
+                        caster,
+                        seq,
+                        ability,
+                        origin,
+                        dir: flight.dir,
+                        server_time: t,
+                    },
+                );
+            }
+            Delivery::Ground => {
+                let delay_ms = def.delay_ms;
+                self.blasts.push(Blast {
+                    client: client_id,
+                    ability,
+                    pos: aim,
+                    lands_at: t + delay_ms as Ms,
+                    rewind_ms,
+                });
+                self.send(
+                    Dest::All,
+                    ServerMsg::GroundBlast {
+                        caster,
+                        seq,
+                        ability,
+                        pos: aim,
+                        delay_ms,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Sweep every skillshot up to `now` against hostiles where the shooter
+    /// saw them. A uniform grid replaces the linear scan once zones hold
+    /// hundreds of mobs; a greybox zone has a few dozen.
+    fn advance_shots(&mut self, now: Ms) {
+        let mut i = 0;
+        while i < self.shots.len() {
+            let end = self.shots[i].flight.ends_at();
+            let mut verdict: Option<(Option<EntityId>, Ms, f32)> = None;
+            loop {
+                let s = &self.shots[i];
+                let (a, b) = (s.swept_to, (s.swept_to + SHOT_STEP_MS).min(end));
+                if b > now {
+                    break;
+                }
+                let look = ((a + b) / 2).saturating_sub(s.rewind_ms);
+                let mut best: Option<(f32, EntityId)> = None;
+                for n in self.npcs.values().filter(|n| n.kind.hostile() && n.alive()) {
+                    if let Some(d) =
+                        s.flight
+                            .sweep(a, b, xz(n.pos_at(look)), n.hit_radius(&self.pack))
+                        && best.is_none_or(|(bd, _)| d < bd)
+                    {
+                        best = Some((d, n.entity));
+                    }
+                }
+                let range = s.flight.range;
+                self.shots[i].swept_to = b;
+                if let Some((d, e)) = best {
+                    verdict = Some((Some(e), b, d));
+                } else if b >= end {
+                    verdict = Some((None, b, range));
+                }
+                if verdict.is_some() {
+                    break;
+                }
+            }
+            let Some((hit, t, d)) = verdict else {
+                i += 1;
+                continue;
+            };
+            let shot = self.shots.swap_remove(i);
+            let f = shot.flight;
+            let at = [f.origin[0] + f.dir[0] * d, f.origin[1] + f.dir[1] * d];
+            self.send(
+                Dest::All,
+                ServerMsg::ProjectileEnd {
+                    id: shot.id,
+                    hit,
+                    at,
+                },
+            );
+            if let Some(e) = hit
+                && self.players.contains_key(&shot.client)
+            {
+                self.resolve(shot.client, shot.ability, e, t);
+            }
+        }
+    }
+
+    /// Land ground abilities that are due, nearest victims first.
+    fn advance_blasts(&mut self, now: Ms) {
+        let (due, rest): (Vec<Blast>, Vec<Blast>) = std::mem::take(&mut self.blasts)
+            .into_iter()
+            .partition(|b| b.lands_at <= now);
+        self.blasts = rest;
+        for b in due {
+            if !self.players.contains_key(&b.client) {
+                continue;
+            }
+            let def = &self.pack.abilities[b.ability as usize];
+            let look = b.lands_at.saturating_sub(b.rewind_ms);
+            let mut victims: Vec<(f32, EntityId)> = self
+                .npcs
+                .values()
+                .filter(|n| n.kind.hostile() && n.alive())
+                .filter_map(|n| {
+                    let p = xz(n.pos_at(look));
+                    projectile::in_blast(b.pos, def.radius, p, n.hit_radius(&self.pack)).then(
+                        || {
+                            (
+                                dist_xz([p[0], 0.0, p[1]], [b.pos[0], 0.0, b.pos[1]]),
+                                n.entity,
+                            )
+                        },
+                    )
+                })
+                .collect();
+            victims.sort_by(|a, b| a.0.total_cmp(&b.0));
+            victims.truncate(def.max_targets as usize);
+            for (_, e) in victims {
+                self.resolve(b.client, b.ability, e, b.lands_at);
+            }
+        }
+    }
+
+    /// Land mob slams. Pawns are tested when it lands; each player a little
+    /// later (their one-way latency), against their newest position, so a
+    /// dodge that cleared the circle on their screen also clears it here.
+    fn advance_slams(&mut self, now: Ms) {
+        let mut i = 0;
+        while i < self.slams.len() {
+            if now < self.slams[i].lands_at {
+                i += 1;
+                continue;
+            }
+            let source_alive = self
+                .npcs
+                .get(&self.slams[i].source)
+                .is_some_and(|n| n.alive());
+            if !source_alive {
+                self.slams.swap_remove(i);
+                continue;
+            }
+            let Slam {
+                source,
+                pos,
+                radius,
+                damage,
+                lands_at,
+                ..
+            } = self.slams[i];
+            let mut victims = Vec::new();
+            if !self.slams[i].pawns_done {
+                self.slams[i].pawns_done = true;
+                for n in self.npcs.values() {
+                    if n.kind == EntityKind::Pawn
+                        && n.alive()
+                        && projectile::in_blast(pos, radius, xz(n.pos), BODY_RADIUS)
+                    {
+                        victims.push((n.entity, lands_at));
+                    }
+                }
+            }
+            for p in self.players.values() {
+                let at = lands_at + (p.rtt_ms / 2).min(MAX_DODGE_GRACE_MS);
+                if now < at || self.slams[i].players_done.contains(&p.entity) {
+                    continue;
+                }
+                self.slams[i].players_done.push(p.entity);
+                if p.respawn_at.is_none()
+                    && projectile::in_blast(pos, radius, xz(p.pos), BODY_RADIUS)
+                {
+                    victims.push((p.entity, at));
+                }
+            }
+            for (target, t) in victims {
+                self.send(
+                    Dest::All,
+                    ServerMsg::Swing {
+                        source,
+                        target,
+                        amount: damage,
+                        crit: false,
+                        heal: false,
+                    },
+                );
+                self.damage(target, damage, source, 1.0, t);
+            }
+            if now >= lands_at + MAX_DODGE_GRACE_MS {
+                self.slams.swap_remove(i);
+            } else {
+                i += 1;
+            }
         }
     }
 
@@ -798,6 +1202,9 @@ impl Zone {
             self.advance_player(id, now, now_us);
         }
         self.advance_auras(now);
+        self.advance_shots(now);
+        self.advance_blasts(now);
+        self.advance_slams(now);
         while now >= self.next_ai {
             let t = self.next_ai;
             self.tick_ai(t);
@@ -845,7 +1252,21 @@ impl Zone {
                         },
                     );
                     if !cast.channel {
-                        self.resolve(id, cast.ability, cast.target, cast.ends_at);
+                        let p = &self.players[&id];
+                        match p.cast_aim {
+                            Some(aim) => {
+                                let allowance = p.cast_allowance;
+                                self.launch(
+                                    id,
+                                    cast.ability,
+                                    cast.seq,
+                                    aim,
+                                    cast.ends_at,
+                                    allowance,
+                                );
+                            }
+                            None => self.resolve(id, cast.ability, cast.target, cast.ends_at),
+                        }
                     }
                     continue;
                 }
@@ -1010,9 +1431,44 @@ impl Zone {
                 Action::None => {}
                 Action::Attack(target) => self.swing(id, target, now, false),
                 Action::Heal(target) => self.swing(id, target, now, true),
+                Action::Slam(pos) => self.start_slam(id, pos, now),
             }
         }
         self.separate();
+        for n in self.npcs.values_mut().filter(|n| n.kind.hostile()) {
+            n.trail.push_back((now, n.pos));
+            if n.trail.len() > TRAIL_LEN {
+                n.trail.pop_front();
+            }
+        }
+    }
+
+    fn start_slam(&mut self, source: EntityId, pos: [f32; 2], now: Ms) {
+        let Some(slam) = self
+            .npcs
+            .get(&source)
+            .and_then(|n| self.pack.mobs[n.def as usize].slam.clone())
+        else {
+            return;
+        };
+        self.slams.push(Slam {
+            source,
+            pos,
+            radius: slam.radius,
+            damage: slam.damage,
+            lands_at: now + slam.windup_ms as Ms,
+            pawns_done: false,
+            players_done: Vec::new(),
+        });
+        self.send(
+            Dest::All,
+            ServerMsg::Telegraph {
+                source,
+                pos,
+                radius: slam.radius,
+                windup_ms: slam.windup_ms,
+            },
+        );
     }
 
     fn tick_players(&mut self, now: Ms, dt: f32) {
@@ -1142,6 +1598,18 @@ impl Zone {
                 take(a.next_tick.min(a.expires_at));
             }
         }
+        for s in &self.shots {
+            take((s.swept_to + SHOT_STEP_MS).min(s.flight.ends_at()));
+        }
+        for b in &self.blasts {
+            take(b.lands_at);
+        }
+        for s in &self.slams {
+            for p in self.players.values() {
+                take(s.lands_at + (p.rtt_ms / 2).min(MAX_DODGE_GRACE_MS));
+            }
+            take(s.lands_at);
+        }
         best
     }
 
@@ -1216,7 +1684,10 @@ fn think(
     player_targets: &HashMap<EntityId, Option<EntityId>>,
 ) -> Action {
     match n.brain {
-        Brain::Dummy => Action::None,
+        Brain::Dummy => {
+            patrol(n, pack, now);
+            Action::None
+        }
         Brain::Mob { home, evading, .. } => think_mob(n, pack, home, evading, now, dt, bodies),
         Brain::Pawn {
             owner,
@@ -1245,6 +1716,23 @@ fn think(
     }
 }
 
+/// The training dummy walks a circle around its spot, if the pack says so.
+fn patrol(n: &mut Npc, pack: &ContentPack, now: Ms) {
+    let d = &pack.dummy;
+    if d.patrol_radius <= 0.0 || d.patrol_speed <= 0.0 {
+        return;
+    }
+    let lap_ms = (std::f32::consts::TAU * d.patrol_radius / d.patrol_speed * 1000.0) as Ms;
+    let a = (now % lap_ms.max(1)) as f32 / lap_ms as f32 * std::f32::consts::TAU;
+    n.pos = [
+        d.position[0] + a.sin() * d.patrol_radius,
+        0.0,
+        d.position[2] + a.cos() * d.patrol_radius,
+    ];
+    // Walking direction is the derivative: (cos a, -sin a).
+    n.facing = a.cos().atan2(-a.sin());
+}
+
 fn set_evading(n: &mut Npc, value: bool) {
     if let Brain::Mob { evading, .. } = &mut n.brain {
         *evading = value;
@@ -1267,6 +1755,7 @@ fn think_mob(
             n.hp = n.max_hp;
             n.pos = home;
             n.next_attack = 0;
+            n.trail.clear();
         }
         return Action::None;
     }
@@ -1319,6 +1808,22 @@ fn think_mob(
     }
     n.target = Some(target);
     let tp = bodies[&target].pos;
+    if now < n.winding_until {
+        return Action::None; // rooted while the slam winds up
+    }
+    if let Some(slam) = &def.slam
+        && now >= n.next_slam
+        && dist_xz(n.pos, tp) <= def.attack_range + slam.radius * 0.5
+    {
+        n.next_slam = now + slam.cooldown_ms as Ms;
+        n.winding_until = now + slam.windup_ms as Ms;
+        n.next_attack = n.next_attack.max(n.winding_until + def.attack_ms as Ms / 2);
+        let (dx, dz) = (tp[0] - n.pos[0], tp[2] - n.pos[2]);
+        if dx.abs() + dz.abs() > 1e-3 {
+            n.facing = dx.atan2(dz);
+        }
+        return Action::Slam(xz(tp));
+    }
     engage(
         n,
         tp,
@@ -1643,5 +2148,234 @@ mod tests {
         let respawn = z.pack.mobs[z.npcs[&mob].def as usize].respawn_ms as Ms;
         run(&mut z, 0, respawn + 100);
         assert!(z.npcs[&mob].alive());
+    }
+    fn ability(z: &Zone, id: &str) -> AbilityId {
+        z.pack.abilities.iter().position(|a| a.id == id).unwrap() as AbilityId
+    }
+
+    fn cast(
+        z: &mut Zone,
+        client: ClientId,
+        ability: AbilityId,
+        aim: Option<[f32; 2]>,
+        now: Ms,
+        rtt: Ms,
+    ) {
+        let msg = ClientMsg::Cast {
+            seq: 1,
+            ability,
+            target: 0,
+            queued: false,
+            move_seq: 0,
+            aim,
+        };
+        z.handle(client, msg, now, now * 1000, rtt);
+    }
+
+    /// A player with no pawns, standing `dist` m south of `mob`.
+    fn lone_player_near(z: &mut Zone, mob: EntityId, dist: f32) -> [f32; 3] {
+        z.add_player(7, 0);
+        for pe in std::mem::take(&mut z.players.get_mut(&7).unwrap().pawns) {
+            z.npcs.remove(&pe);
+        }
+        let mp = z.npcs[&mob].pos;
+        let at = [mp[0], 0.0, mp[2] + dist];
+        walk_to(z, 7, at, 0);
+        at
+    }
+
+    fn shot_verdicts(msgs: &[(Dest, u8, ServerMsg)]) -> Vec<Option<EntityId>> {
+        msgs.iter()
+            .filter_map(|(_, _, m)| match m {
+                ServerMsg::ProjectileEnd { hit, .. } => Some(*hit),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn skillshot_hits_what_it_is_aimed_at_and_misses_otherwise() {
+        let mut z = zone();
+        let mob = first_mob(&z);
+        let mp = z.npcs[&mob].pos;
+        lone_player_near(&mut z, mob, 15.0);
+        run(&mut z, 0, 200);
+        let spike = ability(&z, "glacial_spike");
+        cast(&mut z, 7, spike, Some([mp[0], mp[2]]), 210, 0);
+        run(&mut z, 210, 2000);
+        let msgs = z.drain_outbox();
+        assert_eq!(shot_verdicts(&msgs), vec![Some(mob)]);
+        assert!(
+            msgs.iter()
+                .any(|(_, _, m)| matches!(m, ServerMsg::Hit { target, .. } if *target == mob))
+        );
+
+        // Aimed 90 degrees off: flies along empty ground and gives up.
+        let me = z.players[&7].pos;
+        cast(&mut z, 7, spike, Some([me[0] + 10.0, me[2]]), 5000, 0);
+        run(&mut z, 5000, 7000);
+        assert_eq!(shot_verdicts(&z.drain_outbox()), vec![None]);
+    }
+
+    #[test]
+    fn skillshot_without_aim_fires_at_the_target() {
+        let mut z = zone();
+        let mob = first_mob(&z);
+        lone_player_near(&mut z, mob, 12.0);
+        run(&mut z, 0, 200);
+        let spike = ability(&z, "glacial_spike");
+        let msg = ClientMsg::Cast {
+            seq: 1,
+            ability: spike,
+            target: mob,
+            queued: false,
+            move_seq: 0,
+            aim: None,
+        };
+        z.handle(7, msg, 210, 210_000, 0);
+        run(&mut z, 210, 2000);
+        assert_eq!(shot_verdicts(&z.drain_outbox()), vec![Some(mob)]);
+    }
+
+    #[test]
+    fn rewound_positions_interpolate_the_trail() {
+        let mut z = zone();
+        let mob = first_mob(&z);
+        let n = z.npcs.get_mut(&mob).unwrap();
+        n.trail = VecDeque::from(vec![(1000, [0.0, 0.0, 0.0]), (1050, [1.0, 0.0, 0.0])]);
+        n.pos = [1.0, 0.0, 0.0];
+        assert_eq!(n.pos_at(900), [0.0, 0.0, 0.0]);
+        assert!((n.pos_at(1025)[0] - 0.5).abs() < 1e-5);
+        assert_eq!(n.pos_at(2000), [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn ground_blast_hits_the_camp_up_to_its_cap() {
+        let mut z = zone();
+        let mob = first_mob(&z);
+        let centre = z.pack.camps[0].position;
+        lone_player_near(&mut z, mob, 14.0);
+        run(&mut z, 0, 200);
+        let rune = ability(&z, "flame_rune");
+        z.pack.abilities[rune as usize].max_targets = 2;
+        cast(&mut z, 7, rune, Some([centre[0], centre[2]]), 210, 0);
+        run(&mut z, 210, 1500);
+        let hits = z
+            .drain_outbox()
+            .iter()
+            .filter(|(_, _, m)| matches!(m, ServerMsg::Hit { ability, .. } if *ability == rune))
+            .count();
+        assert_eq!(hits, 2, "three ghouls in the circle, capped at two");
+    }
+
+    #[test]
+    fn ground_blast_needs_an_aim_or_a_target() {
+        let mut z = zone();
+        let mob = first_mob(&z);
+        lone_player_near(&mut z, mob, 14.0);
+        let rune = ability(&z, "flame_rune");
+        cast(&mut z, 7, rune, None, 100, 0);
+        assert!(z.drain_outbox().iter().any(|(_, _, m)| matches!(
+            m,
+            ServerMsg::CastFailed {
+                reason: FailReason::NoTarget,
+                ..
+            }
+        )));
+    }
+
+    /// Pull the brute, wait for its slam, then step out `step_out_after` ms
+    /// after the slam lands on the server (None = stay in). Returns whether
+    /// the slam hit us.
+    fn slam_test(rtt: Ms, step_out_after: Option<Ms>) -> bool {
+        let mut z = zone();
+        let brute = *z
+            .npcs
+            .iter()
+            .find(|(_, n)| n.kind == EntityKind::Mob && z.pack.mobs[n.def as usize].slam.is_some())
+            .unwrap()
+            .0;
+        lone_player_near(&mut z, brute, 1.5);
+        z.players.get_mut(&7).unwrap().rtt_ms = rtt;
+        let damage = z.pack.mobs[z.npcs[&brute].def as usize]
+            .slam
+            .clone()
+            .unwrap()
+            .damage;
+        let me = z.players[&7].entity;
+        let mut lands_at = None;
+        let mut t = 0;
+        while t < 6000 {
+            z.advance(t, t * 1000);
+            // Keep the player planted where the brute can reach.
+            for (_, _, m) in z.drain_outbox() {
+                match m {
+                    ServerMsg::Telegraph { windup_ms, .. } if lands_at.is_none() => {
+                        lands_at = Some(t + windup_ms as Ms);
+                    }
+                    ServerMsg::Swing {
+                        source,
+                        target,
+                        amount,
+                        ..
+                    } if source == brute && target == me && amount == damage => {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            if let (Some(l), Some(after)) = (lands_at, step_out_after)
+                && t >= l + after
+            {
+                let p = z.players[&7].pos;
+                walk_to(&mut z, 7, [p[0] + 12.0, 0.0, p[2]], t);
+            }
+            if lands_at.is_some_and(|l| t > l + 500) {
+                return false;
+            }
+            t += 5;
+        }
+        panic!("the brute never slammed");
+    }
+
+    #[test]
+    fn slam_hits_players_who_stay_in_the_circle() {
+        assert!(slam_test(100, None));
+    }
+
+    #[test]
+    fn slam_misses_a_dodge_inside_the_latency_grace() {
+        // 100 ms RTT: the server waits 50 ms for this player's newest move.
+        assert!(!slam_test(100, Some(30)));
+    }
+
+    #[test]
+    fn slam_hits_a_dodge_that_came_too_late() {
+        assert!(slam_test(100, Some(90)));
+    }
+
+    #[test]
+    fn dash_lets_the_player_move_faster_than_walking() {
+        let mut z = zone();
+        z.add_player(7, 0);
+        let start = z.players[&7].pos;
+        let far = [start[0] + 6.5, 0.0, start[2]];
+        let moved = |z: &mut Zone, seq: u32, t: Ms| {
+            let msg = ClientMsg::Move {
+                seq,
+                pos: far,
+                facing: 0.0,
+                moving: true,
+            };
+            z.handle(7, msg, t, t * 1000, 0);
+            z.players[&7].pos == far
+        };
+        assert!(
+            !moved(&mut z, 1, 200),
+            "6.5 m in 200 ms is too fast on foot"
+        );
+        let step = ability(&z, "blink_step");
+        cast(&mut z, 7, step, Some([far[0], far[2]]), 300, 0);
+        assert!(moved(&mut z, 2, 400), "a granted dash covers it");
     }
 }

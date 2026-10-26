@@ -24,6 +24,8 @@ pub enum ClientMsg {
         target: EntityId,
         queued: bool,
         move_seq: u32,
+        /// Ground point (x, z) for aimed abilities. None = at the target.
+        aim: Option<[f32; 2]>,
     },
     CancelCast,
     /// Channel COMBAT. Pawns assist whatever their owner has targeted.
@@ -109,6 +111,39 @@ pub enum ServerMsg {
     },
     Correction {
         pos: [f32; 3],
+    },
+    /// A skillshot left its caster. Clients fly it themselves from here.
+    /// `seq` matches the caster's Cast request.
+    ProjectileSpawn {
+        id: u32,
+        caster: EntityId,
+        seq: u32,
+        ability: AbilityId,
+        origin: [f32; 2],
+        dir: [f32; 2],
+        server_time: Ms,
+    },
+    /// The server's verdict on a skillshot: whom it hit, if anyone.
+    ProjectileEnd {
+        id: u32,
+        hit: Option<EntityId>,
+        /// Where it stopped, on the ground plane.
+        at: [f32; 2],
+    },
+    /// A player's ground ability: lands at `pos` after `delay_ms`.
+    GroundBlast {
+        caster: EntityId,
+        seq: u32,
+        ability: AbilityId,
+        pos: [f32; 2],
+        delay_ms: u32,
+    },
+    /// A mob's telegraphed attack: anything in the circle when it lands is hit.
+    Telegraph {
+        source: EntityId,
+        pos: [f32; 2],
+        radius: f32,
+        windup_ms: u32,
     },
     /// Channel STATE, 20 Hz.
     Snapshot {

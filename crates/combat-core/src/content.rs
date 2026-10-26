@@ -85,6 +85,50 @@ pub struct AbilityDef {
     pub anim: String,
     #[serde(default)]
     pub vfx: String,
+    /// How the ability reaches its victims. Everything except `target`
+    /// is aimed at a ground point instead of needing a target.
+    #[serde(default)]
+    pub delivery: Delivery,
+    /// Skillshot: flight speed (m/s) and collision width (m).
+    #[serde(default)]
+    pub speed: f32,
+    #[serde(default)]
+    pub width: f32,
+    /// Ground: blast radius (m) and the delay before it lands.
+    #[serde(default)]
+    pub radius: f32,
+    #[serde(default)]
+    pub delay_ms: u32,
+    /// Dash: how far it carries the caster (m).
+    #[serde(default)]
+    pub dash_m: f32,
+    /// Most enemies one ground blast can hit.
+    #[serde(default = "default_max_targets")]
+    pub max_targets: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Delivery {
+    /// Tab-target: resolves on the selected enemy.
+    #[default]
+    Target,
+    /// A projectile along the ground that hits the first enemy it touches.
+    Skillshot,
+    /// A circle at a point that lands after `delay_ms`.
+    Ground,
+    /// Moves the caster up to `dash_m` toward the aim point.
+    Dash,
+}
+
+impl Delivery {
+    pub fn aimed(self) -> bool {
+        self != Delivery::Target
+    }
+}
+
+fn default_max_targets() -> u32 {
+    8
 }
 
 fn default_gcd() -> u32 {
@@ -114,6 +158,14 @@ impl AbilityDef {
     }
     pub fn channel_tick_interval(&self) -> Ms {
         (self.channel_ms / self.channel_ticks.max(1)) as Ms
+    }
+    /// Seconds a skillshot flies before it gives up.
+    pub fn flight_ms(&self) -> Ms {
+        if self.speed > 0.0 {
+            (self.range / self.speed * 1000.0) as Ms
+        } else {
+            0
+        }
     }
 }
 
@@ -153,6 +205,12 @@ pub struct DummyDef {
     /// Heals to full after this long without taking damage.
     pub reset_after_ms: u32,
     pub position: [f32; 3],
+    /// Walks a circle of this radius around `position`, so aimed abilities
+    /// have something moving to hit. 0 = stands still.
+    #[serde(default)]
+    pub patrol_radius: f32,
+    #[serde(default)]
+    pub patrol_speed: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +246,18 @@ pub struct MobDef {
     pub scale: f32,
     #[serde(default = "default_mob_color")]
     pub color: String,
+    /// A telegraphed area attack players can step out of.
+    #[serde(default)]
+    pub slam: Option<SlamDef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlamDef {
+    pub radius: f32,
+    /// How long the warning shows before it lands.
+    pub windup_ms: u32,
+    pub cooldown_ms: u32,
+    pub damage: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +330,21 @@ impl ContentPack {
         for a in &self.abilities {
             if a.cast_ms > 0 && a.channel_ms > 0 {
                 return Err(format!("{}: cannot be both a cast and a channel", a.id));
+            }
+            match a.delivery {
+                Delivery::Skillshot if a.speed <= 0.0 || a.width <= 0.0 => {
+                    return Err(format!("{}: skillshot needs speed and width", a.id));
+                }
+                Delivery::Ground if a.radius <= 0.0 => {
+                    return Err(format!("{}: ground ability needs a radius", a.id));
+                }
+                Delivery::Dash if a.dash_m <= 0.0 => {
+                    return Err(format!("{}: dash needs dash_m", a.id));
+                }
+                _ => {}
+            }
+            if a.delivery.aimed() && a.channel_ms > 0 {
+                return Err(format!("{}: aimed abilities cannot channel", a.id));
             }
             if a.channel_ms > 0 && a.channel_ticks == 0 {
                 return Err(format!("{}: channel needs channel_ticks > 0", a.id));

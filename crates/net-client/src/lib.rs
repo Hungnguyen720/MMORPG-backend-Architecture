@@ -9,10 +9,11 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::{Instant, SystemTime};
 
 use combat_core::movement::dist_xz;
+use combat_core::projectile::{self, BODY_RADIUS, Flight, xz};
 use combat_core::protocol::{self, ClientMsg, EntityKind, PawnCmd, ServerMsg, StopReason};
 use combat_core::{
-    AbilityId, AuraId, CastCtx, CasterState, ContentPack, EntityId, FailReason, Ms, PROTOCOL_ID,
-    Started, channel, connection_config,
+    AbilityId, AuraId, CastCtx, CasterState, ContentPack, Delivery, EntityId, FailReason, Ms,
+    PROTOCOL_ID, Started, channel, connection_config,
 };
 use renet::RenetClient;
 use renetcode::ClientAuthentication;
@@ -21,7 +22,10 @@ pub use transport::LagTransport;
 
 const MOVE_SEND_MS: Ms = 50;
 /// Remote entities are drawn this far in the past, between two snapshots.
-pub const INTERP_DELAY_MS: f64 = 100.0;
+/// The server's rewind for aimed hits assumes this same value.
+pub const INTERP_DELAY_MS: f64 = projectile::INTERP_DELAY_MS as f64;
+/// Ground markers stay up this long after landing, as a flash.
+const MARKER_LINGER_MS: Ms = 250;
 
 #[derive(Debug, Clone)]
 pub enum ClientEvent {
@@ -55,12 +59,71 @@ pub enum ClientEvent {
         ability: AbilityId,
         queue_gap_us: Option<u32>,
     },
+    /// One of our dashes left: the engine moves the body `distance` metres
+    /// along `dir` (ground plane x, z).
+    Dash {
+        dir: [f32; 2],
+        distance: f32,
+    },
+    /// One of our skillshots has both verdicts: what it hit on our screen and
+    /// what it hit on the server. They should almost always agree.
+    ShotResolved {
+        predicted: Option<EntityId>,
+        server: Option<EntityId>,
+    },
+}
+
+/// A skillshot as this client flies it, on the local clock.
+struct LocalShot {
+    /// Server id, once its spawn message has arrived.
+    id: Option<u32>,
+    /// Set for our own shots: the Cast request's seq.
+    seq: Option<u32>,
+    ability: AbilityId,
+    flight: Flight,
+    swept_to: Ms,
+    /// What it hit (or None for a miss) once it stopped on our screen.
+    local: Option<Option<EntityId>>,
+    server: Option<Option<EntityId>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerKind {
+    /// Our own ground ability.
+    Mine,
+    /// Another player's ground ability.
+    Ally,
+    /// A mob's telegraphed attack: get out.
+    Danger,
+}
+
+/// A circle on the ground that lands at `lands_at` (local clock).
+#[derive(Debug, Clone)]
+pub struct Marker {
+    pub kind: MarkerKind,
+    pub pos: [f32; 2],
+    pub radius: f32,
+    pub placed_at: Ms,
+    pub lands_at: Ms,
+    /// Our predicted blasts, to drop the server's echo.
+    seq: Option<u32>,
+}
+
+/// A skillshot to draw this frame.
+#[derive(Debug, Clone)]
+pub struct ShotView {
+    pub ability: AbilityId,
+    pub pos: [f32; 2],
+    pub dir: [f32; 2],
+    pub mine: bool,
 }
 
 struct LocalQueued {
     seq: u32,
     ability: AbilityId,
     target: EntityId,
+    /// Aim the player gave at the press (None = soft target).
+    aim: Option<[f32; 2]>,
 }
 
 /// State to restore if the server rejects a predicted cast.
@@ -116,6 +179,12 @@ pub struct ClientSession {
     events: Vec<ClientEvent>,
     correction: Option<[f32; 3]>,
     pub last_queue_gap_us: Option<u32>,
+    /// Resolved aim of our predicted cast in progress: (seq, ground point).
+    cast_aim: Option<(u32, [f32; 2])>,
+    shots: Vec<LocalShot>,
+    markers: Vec<Marker>,
+    /// Our skillshots: (screen and server agreed, both verdicts known).
+    pub shot_agreement: (u32, u32),
 }
 
 impl ClientSession {
@@ -160,6 +229,10 @@ impl ClientSession {
             events: Vec::new(),
             correction: None,
             last_queue_gap_us: None,
+            cast_aim: None,
+            shots: Vec::new(),
+            markers: Vec::new(),
+            shot_agreement: (0, 0),
         })
     }
 
@@ -258,6 +331,8 @@ impl ClientSession {
         }
         let now = self.now();
         self.advance_prediction(now);
+        self.advance_shots(now);
+        self.markers.retain(|m| now < m.lands_at + MARKER_LINGER_MS);
         if self.me.is_some()
             && (now >= self.last_move_sent + MOVE_SEND_MS || self.moving != self.last_sent_moving)
         {
@@ -316,6 +391,12 @@ impl ClientSession {
     /// The player pressed the button for `ability`. Responds on this frame:
     /// starts the bar and GCD locally, or queues, or shows an error.
     pub fn press(&mut self, ability: AbilityId) {
+        self.press_at(ability, None);
+    }
+
+    /// Like `press`, with a ground point (x, z) for aimed abilities: the
+    /// cursor on PC, the drag point on mobile. None fires at the target.
+    pub fn press_at(&mut self, ability: AbilityId, aim: Option<[f32; 2]>) {
         let Some(def) = self.pack.ability(ability).cloned() else {
             return;
         };
@@ -329,12 +410,23 @@ impl ClientSession {
                 .push(ClientEvent::Error(FailReason::Dead.text().into()));
             return;
         }
-        let Some(target) = self.target else {
-            self.events
-                .push(ClientEvent::Error(FailReason::NoTarget.text().into()));
-            return;
+        let aimed = def.delivery.aimed();
+        let target = match self.target {
+            Some(t) => t,
+            // Aimed abilities need no target; 0 is never an entity.
+            None if aimed => 0,
+            None => {
+                self.events
+                    .push(ClientEvent::Error(FailReason::NoTarget.text().into()));
+                return;
+            }
         };
-        if self.entities.contains_key(&target) && !self.attackable(target) {
+        if aimed {
+            if let Err(reason) = self.local_aim(&def, target, aim) {
+                self.events.push(ClientEvent::Error(reason.text().into()));
+                return;
+            }
+        } else if self.entities.contains_key(&target) && !self.attackable(target) {
             self.events
                 .push(ClientEvent::Error(FailReason::InvalidTarget.text().into()));
             return;
@@ -347,21 +439,25 @@ impl ClientSession {
                     seq,
                     ability,
                     target,
+                    aim,
                 }) {
                     self.locally_failed.push(old.seq);
                 }
+                // A queued aimed press keeps the player's own aim; the server
+                // falls back to the target when it fires.
                 let msg = ClientMsg::Cast {
                     seq,
                     ability,
                     target,
                     queued: true,
                     move_seq: self.move_seq,
+                    aim,
                 };
                 self.send(channel::COMBAT, &msg);
             } else {
                 let reason = self
                     .caster
-                    .check(ability, &def, now, self.ctx(Some(target)))
+                    .check(ability, &def, now, self.ctx_for(&def, Some(target)))
                     .unwrap_err();
                 self.events.push(ClientEvent::Error(reason.text().into()));
             }
@@ -369,25 +465,237 @@ impl ClientSession {
         }
         if let Err(reason) = self
             .caster
-            .check(ability, &def, now, self.ctx(Some(target)))
+            .check(ability, &def, now, self.ctx_for(&def, Some(target)))
         {
             self.events.push(ClientEvent::Error(reason.text().into()));
             return;
         }
         self.seq += 1;
         let seq = self.seq;
-        self.predict_start(seq, ability, target, now);
+        // Send the aim as resolved on our screen, so a soft-targeted shot
+        // goes where we saw the target, not where the server has it now.
+        let resolved = if aimed {
+            self.local_aim(&def, target, aim).ok()
+        } else {
+            None
+        };
+        self.predict_start(seq, ability, target, now, resolved);
         let msg = ClientMsg::Cast {
             seq,
             ability,
             target,
             queued: false,
             move_seq: self.move_seq,
+            aim: resolved,
         };
         self.send(channel::COMBAT, &msg);
     }
 
-    fn predict_start(&mut self, seq: u32, ability: AbilityId, target: EntityId, t: Ms) {
+    /// The same aim rules as the server's `resolve_aim`, on what we see.
+    fn local_aim(
+        &self,
+        def: &combat_core::AbilityDef,
+        target: EntityId,
+        aim: Option<[f32; 2]>,
+    ) -> Result<[f32; 2], FailReason> {
+        let from = xz(self.pos);
+        let wanted = aim.or_else(|| self.lead_target(def, target));
+        Ok(match def.delivery {
+            Delivery::Target => unreachable!("only aimed abilities have an aim"),
+            Delivery::Skillshot => wanted.unwrap_or(from),
+            Delivery::Ground => {
+                projectile::clamp_aim(from, wanted.ok_or(FailReason::NoTarget)?, def.range)
+            }
+            Delivery::Dash => {
+                let dir = projectile::direction(from, wanted.unwrap_or(from), self.facing);
+                [from[0] + dir[0] * def.dash_m, from[1] + dir[1] * def.dash_m]
+            }
+        })
+    }
+
+    /// Aim assist for a tap with no aim: where the target will be when the
+    /// ability gets there, from its velocity on our screen.
+    fn lead_target(&self, def: &combat_core::AbilityDef, target: EntityId) -> Option<[f32; 2]> {
+        if !self.attackable(target) {
+            return None;
+        }
+        let p = xz(self.entity_pos(target)?);
+        let v = self.velocity(target);
+        let windup = def.cast_ms as f32 / 1000.0;
+        let mut lead = match def.delivery {
+            Delivery::Ground => def.delay_ms as f32 / 1000.0 + windup,
+            Delivery::Skillshot => windup,
+            _ => return Some(p),
+        };
+        let at = |lead: f32| [p[0] + v[0] * lead, p[1] + v[1] * lead];
+        if def.delivery == Delivery::Skillshot {
+            for _ in 0..2 {
+                let a = at(lead);
+                let d = dist_xz([a[0], 0.0, a[1]], self.pos);
+                lead = windup + d / def.speed;
+            }
+        }
+        Some(at(lead))
+    }
+
+    /// Ground-plane velocity (m/s) of a remote entity, from its last two
+    /// snapshots.
+    pub fn velocity(&self, id: EntityId) -> [f32; 2] {
+        let Some(e) = self.entities.get(&id) else {
+            return [0.0; 2];
+        };
+        let n = e.buffer.len();
+        if n < 2 {
+            return [0.0; 2];
+        }
+        let (a, b) = (&e.buffer[n - 2], &e.buffer[n - 1]);
+        let dt = ((b.0 - a.0) / 1000.0) as f32;
+        if dt <= 0.0 {
+            return [0.0; 2];
+        }
+        [(b.1[0] - a.1[0]) / dt, (b.1[2] - a.1[2]) / dt]
+    }
+
+    fn ctx_for(&self, def: &combat_core::AbilityDef, target: Option<EntityId>) -> CastCtx {
+        if def.delivery.aimed() {
+            CastCtx {
+                distance: Some(0.0),
+                moving: self.moving,
+                target_moving: false,
+            }
+        } else {
+            self.ctx(target)
+        }
+    }
+
+    /// Our aimed ability leaves us now: start drawing it at once.
+    fn launch_local(&mut self, seq: u32, ability: AbilityId, aim: [f32; 2], t: Ms) {
+        let def = &self.pack.abilities[ability as usize];
+        let from = xz(self.pos);
+        match def.delivery {
+            Delivery::Target => {}
+            Delivery::Skillshot => {
+                let flight =
+                    Flight::new(from, aim, self.facing, def.speed, def.range, def.width, t);
+                self.shots.push(LocalShot {
+                    id: None,
+                    seq: Some(seq),
+                    ability,
+                    flight,
+                    swept_to: t,
+                    local: None,
+                    server: None,
+                });
+            }
+            Delivery::Ground => self.markers.push(Marker {
+                kind: MarkerKind::Mine,
+                pos: aim,
+                radius: def.radius,
+                placed_at: t,
+                lands_at: t + def.delay_ms as Ms,
+                seq: Some(seq),
+            }),
+            Delivery::Dash => {
+                let dir = projectile::direction(from, aim, self.facing);
+                let (dx, dz) = (aim[0] - from[0], aim[1] - from[1]);
+                self.events.push(ClientEvent::Dash {
+                    dir,
+                    distance: (dx * dx + dz * dz).sqrt(),
+                });
+            }
+        }
+    }
+
+    /// Fly every skillshot on our screen against hostiles as we draw them.
+    fn advance_shots(&mut self, now: Ms) {
+        let hostiles: Vec<(EntityId, [f32; 2], f32)> = self
+            .entities
+            .iter()
+            .filter(|(_, e)| e.kind.hostile() && e.hp > 0.0)
+            .filter_map(|(id, e)| {
+                let scale = match e.kind {
+                    EntityKind::Mob => self.pack.mobs.get(e.def as usize).map_or(1.0, |m| m.scale),
+                    _ => 1.0,
+                };
+                self.entity_pos(*id)
+                    .map(|p| (*id, xz(p), BODY_RADIUS * scale))
+            })
+            .collect();
+        for s in &mut self.shots {
+            if s.local.is_some() {
+                continue;
+            }
+            let end = s.flight.ends_at();
+            let b = now.min(end);
+            let mut best: Option<(f32, EntityId)> = None;
+            for &(id, pos, r) in &hostiles {
+                if let Some(d) = s.flight.sweep(s.swept_to, b, pos, r)
+                    && best.is_none_or(|(bd, _)| d < bd)
+                {
+                    best = Some((d, id));
+                }
+            }
+            s.swept_to = b;
+            if let Some((_, id)) = best {
+                s.local = Some(Some(id));
+            } else if b >= end {
+                s.local = Some(None);
+            }
+        }
+        let mut resolved = Vec::new();
+        self.shots.retain(|s| {
+            let (Some(local), own) = (s.local, s.seq.is_some()) else {
+                return true;
+            };
+            if !own {
+                return false; // someone else's: done once it stops on screen
+            }
+            match s.server {
+                Some(server) => {
+                    resolved.push((local, server));
+                    false
+                }
+                // Wait for the server's verdict, but not forever.
+                None => now < s.flight.ends_at() + 3000,
+            }
+        });
+        for (predicted, server) in resolved {
+            self.shot_agreement.1 += 1;
+            if predicted == server {
+                self.shot_agreement.0 += 1;
+            }
+            self.events
+                .push(ClientEvent::ShotResolved { predicted, server });
+        }
+    }
+
+    /// Skillshots to draw: still flying on our screen.
+    pub fn shots(&self) -> Vec<ShotView> {
+        let now = self.now();
+        self.shots
+            .iter()
+            .filter(|s| s.local.is_none())
+            .map(|s| ShotView {
+                ability: s.ability,
+                pos: s.flight.pos_at(now),
+                dir: s.flight.dir,
+                mine: s.seq.is_some(),
+            })
+            .collect()
+    }
+
+    pub fn markers(&self) -> &[Marker] {
+        &self.markers
+    }
+
+    fn predict_start(
+        &mut self,
+        seq: u32,
+        ability: AbilityId,
+        target: EntityId,
+        t: Ms,
+        aim: Option<[f32; 2]>,
+    ) {
         let def = &self.pack.abilities[ability as usize];
         self.pending.insert(
             seq,
@@ -398,7 +706,12 @@ impl ClientSession {
             },
         );
         // Instants finish immediately; their damage arrives from the server.
-        let _: Started = self.caster.start(ability, def, seq, target, t, 0);
+        let started = self.caster.start(ability, def, seq, target, t, 0);
+        match (started, aim) {
+            (Started::Instant, Some(aim)) => self.launch_local(seq, ability, aim, t),
+            (Started::Bar, Some(aim)) => self.cast_aim = Some((seq, aim)),
+            _ => {}
+        }
     }
 
     fn advance_prediction(&mut self, now: Ms) {
@@ -407,7 +720,12 @@ impl ClientSession {
                 && cast.ends_at <= now
             {
                 let def = self.pack.abilities[cast.ability as usize].clone();
-                self.caster.complete_cast(&def);
+                let done = self.caster.complete_cast(&def).unwrap();
+                if let Some((seq, aim)) = self.cast_aim.take()
+                    && seq == done.seq
+                {
+                    self.launch_local(seq, done.ability, aim, done.ends_at);
+                }
                 continue;
             }
             if let Some(q) = &self.queued {
@@ -415,11 +733,18 @@ impl ClientSession {
                 let ready = self.caster.ready_at(q.ability, &def);
                 if ready <= now {
                     let q = self.queued.take().unwrap();
-                    match self
-                        .caster
-                        .check(q.ability, &def, ready, self.ctx(Some(q.target)))
-                    {
-                        Ok(()) => self.predict_start(q.seq, q.ability, q.target, ready),
+                    let aim = if def.delivery.aimed() {
+                        self.local_aim(&def, q.target, q.aim).ok()
+                    } else {
+                        None
+                    };
+                    match self.caster.check(
+                        q.ability,
+                        &def,
+                        ready,
+                        self.ctx_for(&def, Some(q.target)),
+                    ) {
+                        Ok(()) => self.predict_start(q.seq, q.ability, q.target, ready, aim),
                         Err(reason) => {
                             self.locally_failed.push(q.seq);
                             self.events.push(ClientEvent::Error(reason.text().into()));
@@ -479,6 +804,9 @@ impl ClientSession {
                     if self.caster.cast.as_ref().is_some_and(|c| c.seq == seq) {
                         self.caster.cancel();
                     }
+                    // A predicted shot or rune the server refused never happened.
+                    self.shots.retain(|s| s.seq != Some(seq));
+                    self.markers.retain(|m| m.seq != Some(seq));
                 }
                 if self.queued.as_ref().is_some_and(|q| q.seq == seq) {
                     self.queued = None;
@@ -550,6 +878,79 @@ impl ClientSession {
                 self.events.push(ClientEvent::Died { entity });
             }
             ServerMsg::AuraApplied { .. } | ServerMsg::AuraRemoved { .. } => {}
+            ServerMsg::ProjectileSpawn {
+                id,
+                caster,
+                seq,
+                ability,
+                origin,
+                dir,
+                ..
+            } => {
+                if Some(caster) == self.me {
+                    // Already flying on our screen since the press.
+                    if let Some(s) = self.shots.iter_mut().find(|s| s.seq == Some(seq)) {
+                        s.id = Some(id);
+                    }
+                } else if let Some(def) = self.pack.ability(ability) {
+                    // Fly it from now: it left the caster about one way ago.
+                    let aim = [origin[0] + dir[0], origin[1] + dir[1]];
+                    let flight =
+                        Flight::new(origin, aim, 0.0, def.speed, def.range, def.width, now);
+                    self.shots.push(LocalShot {
+                        id: Some(id),
+                        seq: None,
+                        ability,
+                        flight,
+                        swept_to: now,
+                        local: None,
+                        server: None,
+                    });
+                }
+            }
+            ServerMsg::ProjectileEnd { id, hit, .. } => {
+                if let Some(s) = self.shots.iter_mut().find(|s| s.id == Some(id)) {
+                    s.server = Some(hit);
+                }
+            }
+            ServerMsg::GroundBlast {
+                caster,
+                ability,
+                pos,
+                delay_ms,
+                ..
+            } => {
+                if Some(caster) != self.me
+                    && let Some(def) = self.pack.ability(ability)
+                {
+                    self.markers.push(Marker {
+                        kind: MarkerKind::Ally,
+                        pos,
+                        radius: def.radius,
+                        placed_at: now,
+                        lands_at: now + delay_ms as Ms,
+                        seq: None,
+                    });
+                }
+            }
+            ServerMsg::Telegraph {
+                pos,
+                radius,
+                windup_ms,
+                ..
+            } => {
+                // It lands on the server one way after it reaches us; the
+                // server waits for our dodge by about that much, so show the
+                // full wind-up from now.
+                self.markers.push(Marker {
+                    kind: MarkerKind::Danger,
+                    pos,
+                    radius,
+                    placed_at: now,
+                    lands_at: now + windup_ms as Ms,
+                    seq: None,
+                });
+            }
             ServerMsg::Snapshot {
                 server_time,
                 entities,

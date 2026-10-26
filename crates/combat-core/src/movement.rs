@@ -29,12 +29,26 @@ pub fn in_arena(p: [f32; 3]) -> bool {
 #[derive(Debug, Default)]
 pub struct MoveValidator {
     history: VecDeque<(Ms, [f32; 3])>,
+    /// Extra distance a dash has earned, and until when it counts.
+    bonus: f32,
+    bonus_until: Ms,
 }
 
 impl MoveValidator {
     pub fn reset(&mut self, now: Ms, pos: [f32; 3]) {
         self.history.clear();
         self.history.push_back((now, pos));
+        self.bonus = 0.0;
+    }
+
+    /// A dash the server granted: allow `metres` more than walking speed for
+    /// the next check window.
+    pub fn grant(&mut self, now: Ms, metres: f32) {
+        if now > self.bonus_until {
+            self.bonus = 0.0;
+        }
+        self.bonus += metres;
+        self.bonus_until = now + CHECK_WINDOW_MS + 200;
     }
 
     /// Returns true and records the move if it is plausible.
@@ -48,7 +62,12 @@ impl MoveValidator {
         let ok = match self.history.front() {
             Some(&(t0, p0)) => {
                 let dt = now.saturating_sub(t0).max(50) as f32 / 1000.0;
-                dist_xz(p0, pos) <= max_speed * SPEED_TOLERANCE * dt + SLACK_METRES
+                let bonus = if now <= self.bonus_until {
+                    self.bonus
+                } else {
+                    0.0
+                };
+                dist_xz(p0, pos) <= max_speed * SPEED_TOLERANCE * dt + SLACK_METRES + bonus
             }
             None => true,
         };
@@ -56,5 +75,22 @@ impl MoveValidator {
             self.history.push_back((now, pos));
         }
         ok
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dash_needs_a_grant() {
+        let mut v = MoveValidator::default();
+        v.reset(0, [0.0; 3]);
+        // 7 m/s for 100 ms plus a 6 m dash.
+        assert!(!v.check(100, [6.7, 0.0, 0.0], 7.0));
+        v.grant(100, 6.0);
+        assert!(v.check(100, [6.7, 0.0, 0.0], 7.0));
+        // The grant expires once the window has moved on.
+        assert!(!v.check(3000, [6.7 + 24.0, 0.0, 0.0], 7.0));
     }
 }
